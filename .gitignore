@@ -1,0 +1,29 @@
+# Secrets — never commit. See docs/security.md.
+*.env
+.env
+.env.*
+!*.env.example
+infrastructure/*.conf
+infrastructure/answers.json
+secrets/
+*.pem
+*.key
+!*.pub
+
+# Build output
+dist/
+vendor/
+composer.lock
+node_modules/
+
+# Runtime
+storage/
+*.log
+.phpunit.result.cache
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

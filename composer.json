@@ -1,0 +1,35 @@
+{
+    "name": "wtp/whmcs-wordpress-theme-provisioner",
+    "description": "WHMCS theme/demo selection at checkout with fully automated WordPress provisioning and demo import.",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=7.4",
+        "ext-json": "*",
+        "ext-openssl": "*",
+        "ext-zip": "*",
+        "ext-curl": "*",
+        "ext-hash": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Wtp\\Shared\\": "shared/Wtp/Shared/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Wtp\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "php bin/run-tests.php",
+        "test:unit": "php bin/run-tests.php unit",
+        "test:e2e": "php bin/run-tests.php e2e",
+        "build": "php bin/build.php",
+        "lint": "find shared whmcs wordpress bootstrap bin -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}
