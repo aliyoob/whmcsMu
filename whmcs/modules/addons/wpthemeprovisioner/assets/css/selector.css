@@ -1,0 +1,161 @@
+/* WHMCS WordPress Theme Provisioner — order form picker.
+   Scoped under .wtp-picker so it cannot disturb the host order form template. */
+
+.wtp-picker {
+    margin: 22px 0;
+    border: 1px solid #e2e5e9;
+    border-radius: 6px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.wtp-picker__head {
+    padding: 14px 18px;
+    border-bottom: 1px solid #eef0f2;
+    background: #fafbfc;
+}
+
+.wtp-picker__title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2933;
+}
+
+.wtp-picker__subtitle {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: #6b7480;
+}
+
+.wtp-picker__body { padding: 16px 18px; }
+
+.wtp-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 14px;
+}
+
+.wtp-card {
+    border: 1px solid #e2e5e9;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    transition: border-color .12s ease, box-shadow .12s ease;
+}
+
+.wtp-card:hover { border-color: #b9c2cc; box-shadow: 0 2px 8px rgba(20, 30, 40, .08); }
+
+.wtp-card.is-selected {
+    border-color: #2f7de1;
+    box-shadow: 0 0 0 2px rgba(47, 125, 225, .18);
+}
+
+.wtp-card__media {
+    aspect-ratio: 4 / 3;
+    background: #f1f3f5 center/cover no-repeat;
+    display: block;
+}
+
+.wtp-card__media--empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #aab2bb;
+    font-size: 12px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    min-height: 130px;
+}
+
+.wtp-card__body { padding: 10px 12px 12px; flex: 1 1 auto; }
+
+.wtp-card__name { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: #1f2933; }
+
+.wtp-card__desc {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #6b7480;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.wtp-card__actions {
+    padding: 0 12px 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.wtp-btn {
+    appearance: none;
+    border: 1px solid #2f7de1;
+    background: #2f7de1;
+    color: #fff;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.wtp-btn:hover { background: #2469c2; border-color: #2469c2; }
+
+.wtp-btn--ghost { background: transparent; color: #2f7de1; }
+.wtp-btn--ghost:hover { background: rgba(47, 125, 225, .08); color: #2469c2; }
+
+.wtp-btn--selected,
+.wtp-btn--selected:hover { background: #2e9e5b; border-color: #2e9e5b; cursor: default; }
+
+.wtp-link { font-size: 12px; color: #6b7480; text-decoration: underline; }
+
+.wtp-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    font-size: 13px;
+    color: #6b7480;
+}
+
+.wtp-chosen {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid #cfe3fb;
+    border-radius: 6px;
+    background: #f4f9ff;
+}
+
+.wtp-chosen__thumb {
+    width: 64px;
+    height: 48px;
+    border-radius: 4px;
+    background: #dde7f2 center/cover no-repeat;
+    flex: 0 0 auto;
+}
+
+.wtp-chosen__text { flex: 1 1 auto; font-size: 13px; color: #1f2933; }
+.wtp-chosen__text small { display: block; color: #6b7480; }
+
+.wtp-error {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border-radius: 4px;
+    background: #fdecec;
+    border: 1px solid #f3c2c2;
+    color: #a33a3a;
+    font-size: 13px;
+}
+
+.wtp-hidden { display: none !important; }
+
+@media (max-width: 480px) {
+    .wtp-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+}
