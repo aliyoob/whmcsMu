@@ -94,6 +94,18 @@ final class SecretBox
         return $plain;
     }
 
+    /**
+     * Derive a deterministic sub-key for a purpose that has no storage of its
+     * own — currently the per-job download-URL signing key, which must exist
+     * before the agent has a secret and must survive that secret's rotation.
+     *
+     * @return string raw bytes
+     */
+    public function derive(string $info, int $length = 32): string
+    {
+        return hash_hkdf('sha256', $this->masterKey, $length, 'wtp-derive/' . $info, 'wtp-secretbox-v1');
+    }
+
     private function deriveKey(string $context): string
     {
         // HKDF-SHA256 with a fixed salt; the master key is already full-entropy.

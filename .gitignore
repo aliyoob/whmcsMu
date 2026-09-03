@@ -27,3 +27,10 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Build artefacts copied in by bin/build.php (single source of truth lives elsewhere)
+whmcs/modules/addons/wpthemeprovisioner/resources/wtp-bootstrap.php
+whmcs/modules/addons/wpthemeprovisioner/lib/shared/Wtp/
+whmcs/modules/addons/wpthemeprovisioner/lib/shared/autoload.php
+wordpress/mu-plugins/whmcs-theme-provisioner/shared/Wtp/
+wordpress/mu-plugins/whmcs-theme-provisioner/shared/autoload.php

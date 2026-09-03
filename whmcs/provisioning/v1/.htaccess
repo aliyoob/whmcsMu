@@ -1,0 +1,14 @@
+# Route every /provisioning/v1/* request to the single entry point.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>
+
+# The endpoint speaks JSON only; never let the directory be listed.
+Options -Indexes -MultiViews
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "no-referrer"
+</IfModule>
