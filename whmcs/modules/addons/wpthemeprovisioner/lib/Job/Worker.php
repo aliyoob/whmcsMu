@@ -5,6 +5,7 @@ use Throwable;
 use Wtp\Addon\Container;
 use Wtp\Addon\Panel\PanelException;
 use Wtp\Addon\Panel\PanelFactory;
+use Wtp\Addon\Provision\AgentPoker;
 use Wtp\Addon\Provision\StepContext;
 use Wtp\Addon\Provision\StepHandler;
 use Wtp\Addon\Provision\StepOutcome;
@@ -35,6 +36,8 @@ final class Worker
     private $handlers = [];
     /** @var callable|null receives progress lines for CLI output */
     private $reporter;
+    /** @var AgentPoker|null */
+    private $poker;
 
     public function __construct(Container $container, PanelFactory $panels, ?callable $reporter = null)
     {
@@ -292,6 +295,26 @@ final class Worker
         $age = $reference === null ? 0 : $now - (int) strtotime((string) $reference . ' UTC');
         $timeout = (int) $step['timeout_seconds'];
 
+        // A freshly provisioned site has no traffic, so WP-Cron never fires and
+        // the agent would sit idle forever. Poke it: this is the primary way
+        // agent-side work starts, not just a recovery mechanism.
+        if ($age >= $this->pokeInterval((string) $step['status'])) {
+            $result = $this->poker()->poke($job);
+            if ($result['poked']) {
+                $this->container->eventLog()->debug($jobId, 'Woke the site agent', [
+                    'step' => $stepKey,
+                    'agent_phase' => $result['phase'],
+                ], $stepKey);
+                $jobs->heartbeat($jobId);
+            } else {
+                $this->container->eventLog()->debug($jobId, 'Could not wake the site agent', [
+                    'step' => $stepKey,
+                    'reason' => $result['error'],
+                    'status' => $result['status'],
+                ], $stepKey);
+            }
+        }
+
         if ($age <= $timeout) {
             $jobs->scheduleAt($jobId, $now + min(60, max(15, (int) ceil(($timeout - $age) / 2))));
             return;
@@ -320,6 +343,26 @@ final class Worker
         // Reset to pending so the agent picks the step up again on its next tick.
         $this->container->steps()->requeue($jobId, $stepKey);
         $jobs->scheduleAt($jobId, $now + $this->container->backoff()->delayFor($attempt + 1));
+    }
+
+    /**
+     * How long to wait before poking the agent again.
+     *
+     * A step that has not started yet is poked immediately — that is what
+     * starts the agent in the first place. One already running is given room
+     * to work, so a long import is not interrupted every fifteen seconds.
+     */
+    private function pokeInterval(string $stepStatus): int
+    {
+        return $stepStatus === StepStatus::RUNNING ? 45 : 0;
+    }
+
+    private function poker(): AgentPoker
+    {
+        if ($this->poker === null) {
+            $this->poker = new AgentPoker($this->container);
+        }
+        return $this->poker;
     }
 
     /** @param array<string,mixed> $job */

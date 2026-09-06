@@ -193,8 +193,11 @@ final class PlanBuilder
         $optionWrites = isset($overrides['options_to_set']) && is_array($overrides['options_to_set'])
             ? $overrides['options_to_set'] : [];
         if ($optionWrites !== []) {
+            // Rolled into the "extras" reporting group alongside Elementor:
+            // a declarative option write is not worth its own line in the
+            // customer's progress list.
             $steps[] = [
-                'key' => 'options.apply',
+                'key' => 'extras.options',
                 'importer' => 'options',
                 'options' => $optionWrites,
                 'optional' => true,

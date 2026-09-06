@@ -157,6 +157,10 @@ final class BootstrapHandler implements StepHandler
                 'file' => $basename . '.php',
                 'config' => $basename . '.json',
                 'run_token_enc' => $this->secrets->seal($runToken, 'run-token'),
+                // Retained (encrypted) so the worker can wake a freshly
+                // installed agent before it has a signing secret of its own.
+                // WHMCS still only ever compares the hash when authenticating.
+                'token_enc' => $this->secrets->seal($bootstrapToken, 'bootstrap-token'),
                 'deployed_at' => $container->clock()->now(),
             ],
             'wp' => ['version' => (string) $wp['version']],
