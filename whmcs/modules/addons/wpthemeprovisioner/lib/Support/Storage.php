@@ -126,27 +126,47 @@ final class Storage
     }
 
     /**
-     * Stream a file to the client in bounded chunks, so a 200 MB package never
-     * lands in PHP's memory.
+     * Stream a file out in bounded chunks, so a 200 MB package never lands in
+     * PHP's memory.
+     *
+     * @param resource|null $sink where to write. Null means the HTTP response,
+     *        which is also the only case that flushes — a caller supplying its
+     *        own stream (the test suite, or a future export job) wants the
+     *        bytes, not a flushed output buffer.
+     * @return int bytes written
      */
-    public function stream(string $relativePath, int $chunkSize = 262144): void
+    public function stream(string $relativePath, $sink = null, int $chunkSize = 262144): int
     {
         $path = $this->resolve($relativePath);
         $handle = @fopen($path, 'rb');
         if (!is_resource($handle)) {
             throw new RuntimeException('Cannot open package for streaming');
         }
-        while (!feof($handle)) {
-            $chunk = fread($handle, $chunkSize);
-            if ($chunk === false) {
-                break;
+
+        $written = 0;
+        try {
+            while (!feof($handle)) {
+                $chunk = fread($handle, $chunkSize);
+                if ($chunk === false || $chunk === '') {
+                    break;
+                }
+                $written += strlen($chunk);
+
+                if (is_resource($sink)) {
+                    fwrite($sink, $chunk);
+                    continue;
+                }
+
+                echo $chunk;
+                if (ob_get_level() > 0) {
+                    @ob_flush();
+                }
+                @flush();
             }
-            echo $chunk;
-            if (ob_get_level() > 0) {
-                @ob_flush();
-            }
-            @flush();
+        } finally {
+            fclose($handle);
         }
-        fclose($handle);
+
+        return $written;
     }
 }

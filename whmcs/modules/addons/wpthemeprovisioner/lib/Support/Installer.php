@@ -184,7 +184,10 @@ final class Installer
      */
     public function splitStatements(string $sql): array
     {
-        $withoutComments = preg_replace('/^\s*--.*$/m', '', $sql);
+        // Strip comments anywhere on a line, not just at its start: a trailing
+        // "-- note" after a comma would otherwise be prepended to the next
+        // statement and turn the whole remainder into a comment.
+        $withoutComments = preg_replace('/--[^\n]*/', '', $sql);
         $parts = explode(';', (string) $withoutComments);
 
         $statements = [];

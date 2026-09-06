@@ -11,8 +11,13 @@ final class JobStateMachine
 {
     /** @var array<string,string[]> */
     private const TRANSITIONS = [
+        // AWAITING_AGENT is reachable straight from PENDING on purpose: the
+        // installer can finish and the agent can complete its handshake before
+        // the worker's next tick has moved the job to RUNNING. That race is
+        // normal, not an error.
         JobStatus::PENDING => [
-            JobStatus::RUNNING, JobStatus::CANCELLED, JobStatus::FAILED,
+            JobStatus::RUNNING, JobStatus::AWAITING_AGENT,
+            JobStatus::CANCELLED, JobStatus::FAILED,
         ],
         JobStatus::RUNNING => [
             JobStatus::RUNNING, JobStatus::AWAITING_AGENT, JobStatus::IMPORTING,
@@ -79,7 +84,13 @@ final class JobStateMachine
 
     /** @var array<string,string[]> */
     private const STEP_TRANSITIONS = [
-        StepStatus::PENDING => [StepStatus::RUNNING, StepStatus::SKIPPED, StepStatus::FAILED],
+        // PENDING -> COMPLETED is allowed: an owner may find the work already
+        // done and report only the outcome, and a lost "running" report must
+        // not make the subsequent success impossible to record.
+        StepStatus::PENDING => [
+            StepStatus::PENDING, StepStatus::RUNNING, StepStatus::COMPLETED,
+            StepStatus::SKIPPED, StepStatus::FAILED,
+        ],
         StepStatus::RUNNING => [
             StepStatus::RUNNING, StepStatus::COMPLETED, StepStatus::FAILED,
             StepStatus::SKIPPED, StepStatus::PENDING,

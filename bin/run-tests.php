@@ -14,6 +14,24 @@ $root = dirname(__DIR__);
 require $root . '/shared/autoload.php';
 require $root . '/tests/support/TestCase.php';
 
+// The addon under test, autoloaded from the repository rather than from a
+// built distribution, so the suite always exercises the working tree.
+define('WTP_ADDON_DIR', $root . '/whmcs/modules/addons/wpthemeprovisioner');
+define('WTP_ADDON_NAME', 'wpthemeprovisioner');
+define('WTP_VERSION', '1.0.0');
+define('WTP_API_VERSION', '1.0');
+
+spl_autoload_register(static function (string $class): void {
+    $prefix = 'Wtp\\Addon\\';
+    if (strncmp($class, $prefix, strlen($prefix)) !== 0) {
+        return;
+    }
+    $path = WTP_ADDON_DIR . '/lib/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+    if (is_file($path)) {
+        require_once $path;
+    }
+});
+
 spl_autoload_register(static function (string $class) use ($root): void {
     $prefix = 'Wtp\\Tests\\';
     if (strncmp($class, $prefix, strlen($prefix)) !== 0) {

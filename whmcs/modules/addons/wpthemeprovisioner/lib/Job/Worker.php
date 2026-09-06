@@ -291,6 +291,22 @@ final class Worker
         $stepKey = (string) $step['step_key'];
         $now = $this->container->clock()->now();
 
+        // The handshake is a one-time credential exchange. If the job already
+        // holds a live secret the agent will never repeat it — so a step reset
+        // by "retry from here" would wedge the job forever. Recognise that the
+        // exchange has already happened and move on.
+        if ($stepKey === StepCatalog::AGENT_HANDSHAKE && $this->hasLiveAgentSecret($job)) {
+            $this->container->steps()->complete($jobId, $stepKey, ['already_exchanged' => true]);
+            $this->container->eventLog()->debug(
+                $jobId,
+                'Handshake already satisfied by an existing agent secret',
+                [],
+                $stepKey
+            );
+            $jobs->scheduleAt($jobId, $now);
+            return;
+        }
+
         $reference = $step['heartbeat_at'] ?? ($step['started_at'] ?? $job['updated_at']);
         $age = $reference === null ? 0 : $now - (int) strtotime((string) $reference . ' UTC');
         $timeout = (int) $step['timeout_seconds'];
@@ -300,12 +316,27 @@ final class Worker
         // agent-side work starts, not just a recovery mechanism.
         if ($age >= $this->pokeInterval((string) $step['status'])) {
             $result = $this->poker()->poke($job);
+
             if ($result['poked']) {
                 $this->container->eventLog()->debug($jobId, 'Woke the site agent', [
                     'step' => $stepKey,
                     'agent_phase' => $result['phase'],
                 ], $stepKey);
                 $jobs->heartbeat($jobId);
+
+                // The poke may have advanced this very step. Judge staleness on
+                // what the agent has just reported, never on the row we read
+                // before waking it — otherwise a successful poke is immediately
+                // undone by a timeout that has already been answered.
+                $fresh = $this->container->steps()->find($jobId, $stepKey);
+                if ($fresh === null || StepStatus::isTerminal((string) $fresh['status'])) {
+                    $jobs->scheduleAt($jobId, $now);
+                    return;
+                }
+                if ((string) $fresh['updated_at'] !== (string) $step['updated_at']) {
+                    $jobs->scheduleAt($jobId, $now + 5);
+                    return;
+                }
             } else {
                 $this->container->eventLog()->debug($jobId, 'Could not wake the site agent', [
                     'step' => $stepKey,
@@ -343,6 +374,16 @@ final class Worker
         // Reset to pending so the agent picks the step up again on its next tick.
         $this->container->steps()->requeue($jobId, $stepKey);
         $jobs->scheduleAt($jobId, $now + $this->container->backoff()->delayFor($attempt + 1));
+    }
+
+    /** @param array<string,mixed> $job */
+    private function hasLiveAgentSecret(array $job): bool
+    {
+        try {
+            return $this->container->jobs()->agentSecret($job) !== '';
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**

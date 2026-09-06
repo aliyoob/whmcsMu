@@ -61,11 +61,23 @@ final class HandshakeController
             ]);
         }
 
-        if (!JobStatus::isTerminal((string) $job['status'])
-            && (string) $job['status'] !== JobStatus::AWAITING_AGENT) {
-            $jobs->transition($jobId, JobStatus::AWAITING_AGENT, StepCatalog::PLAN_FETCH);
-        } else {
+        // The agent has genuinely checked in, so the handshake must succeed even
+        // if the job's status is somewhere the state machine will not move from.
+        // Recording the phase is the part that matters; the status is cosmetic
+        // until the worker's next tick.
+        try {
+            if (!JobStatus::isTerminal((string) $job['status'])
+                && (string) $job['status'] !== JobStatus::AWAITING_AGENT) {
+                $jobs->transition($jobId, JobStatus::AWAITING_AGENT, StepCatalog::PLAN_FETCH);
+            } else {
+                $jobs->setPhase($jobId, StepCatalog::PLAN_FETCH);
+            }
+        } catch (\DomainException $e) {
             $jobs->setPhase($jobId, StepCatalog::PLAN_FETCH);
+            $log->warning($jobId, 'Handshake could not move the job status', [
+                'from' => (string) $job['status'],
+                'reason' => $e->getMessage(),
+            ], StepCatalog::AGENT_HANDSHAKE);
         }
 
         $log->info($jobId, 'Agent completed the handshake', [

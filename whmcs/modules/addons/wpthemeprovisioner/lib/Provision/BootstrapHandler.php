@@ -87,9 +87,16 @@ final class BootstrapHandler implements StepHandler
         // A fresh run token per deployment, so a leaked one from a previous
         // attempt cannot drive the new installer.
         $runToken = Bytes::token(24);
+
+        // The token must stay valid for as long as the installer itself does:
+        // downloading and unpacking WordPress on a slow, contended shared host
+        // can take far longer than the nominal TTL, and an expired token there
+        // would strand a perfectly good installation with no way to check in.
+        $installerLifetime = max(3600, $config->getInt('bootstrap_ttl', 1800) * 4);
+
         $bootstrapToken = $container->jobs()->issueBootstrapToken(
             $context->jobId(),
-            $config->getInt('bootstrap_ttl', 1800),
+            $installerLifetime,
             'pending'
         );
 
@@ -99,7 +106,7 @@ final class BootstrapHandler implements StepHandler
         $installerConfig = [
             'job' => $context->jobUuid(),
             'run_token' => $runToken,
-            'expires_at' => $container->clock()->now() + max(3600, $config->getInt('bootstrap_ttl', 1800) * 4),
+            'expires_at' => $container->clock()->now() + $installerLifetime,
             'max_runs' => 40,
             'api_base' => $container->apiBaseUrl(),
             'bootstrap_token' => $bootstrapToken,

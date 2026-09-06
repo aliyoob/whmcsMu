@@ -30,6 +30,13 @@ final class JobStateMachineTest extends TestCase
         }
     }
 
+    public function testAgentMayCheckInBeforeTheWorkerHasStartedTheJob(): void
+    {
+        // The installer finishing and the agent handshaking can both happen
+        // inside one worker interval, so this transition is legitimate.
+        $this->assertTrue($this->sm->canTransition(JobStatus::PENDING, JobStatus::AWAITING_AGENT));
+    }
+
     public function testCompletedIsTerminal(): void
     {
         foreach (JobStatus::all() as $to) {
@@ -101,6 +108,13 @@ final class JobStateMachineTest extends TestCase
         $this->assertTrue($this->sm->canTransitionStep(StepStatus::COMPLETED, StepStatus::COMPLETED));
         $this->assertTrue($this->sm->isRepeatedTerminal(StepStatus::COMPLETED, StepStatus::COMPLETED));
         $this->assertFalse($this->sm->isRepeatedTerminal(StepStatus::RUNNING, StepStatus::RUNNING));
+    }
+
+    public function testAStepMayBeCompletedWithoutAnnouncingItself(): void
+    {
+        // An owner that finds the work already done reports only the outcome;
+        // a lost "running" report must not block recording the success.
+        $this->assertTrue($this->sm->canTransitionStep(StepStatus::PENDING, StepStatus::COMPLETED));
     }
 
     public function testCompletedStepCannotSilentlyFail(): void

@@ -16,8 +16,13 @@ use RuntimeException;
  *     capped, because the far end is a machine we have just handed to a
  *     customer and must not be trusted to behave.
  */
-final class HttpClient
+class HttpClient
 {
+    // Not final: the integration suite substitutes a subclass so the whole
+    // provisioning pipeline can be driven without a network. Everything below
+    // request() is behaviour, not policy, so overriding that one method is
+    // enough to replace the transport completely.
+
     public const MAX_RESPONSE_BYTES = 2097152; // 2 MiB — this client never downloads packages
 
     /** @var int */
