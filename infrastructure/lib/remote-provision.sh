@@ -1,0 +1,596 @@
+#!/usr/bin/env bash
+#
+# remote-provision.sh — runs ON the VPS, as root, invoked by setup-whmcs.sh.
+#
+# Brings a bare Ubuntu/Debian or AlmaLinux/Rocky box to the point where the
+# WHMCS web installer can be opened, and prepares everything the WordPress
+# Theme Provisioner needs.
+#
+# Idempotent: safe to re-run. Existing configuration is backed up, not
+# overwritten blindly, and packages already present are left alone.
+#
+set -euo pipefail
+
+ANSWERS_FILE="${1:-}"
+[[ -f "$ANSWERS_FILE" ]] || { echo "usage: $0 /path/to/answers.env" >&2; exit 2; }
+# shellcheck disable=SC1090
+source "$ANSWERS_FILE"
+
+[[ "$(id -u)" == "0" ]] || { echo "This script must run as root." >&2; exit 1; }
+
+BACKUP_DIR="/var/backups/wtp-setup-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$BACKUP_DIR"
+
+step()  { printf '\n\033[1m▸ %s\033[0m\n' "$*"; }
+note()  { printf '  %s\n' "$*"; }
+warn()  { printf '  \033[33m! %s\033[0m\n' "$*" >&2; }
+fail()  { printf '  \033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Preserve anything we are about to replace, so a re-run is reversible.
+backup() {
+  [[ -e "$1" ]] || return 0
+  local target="${BACKUP_DIR}$(dirname "$1")"
+  mkdir -p "$target"
+  cp -a "$1" "$target/" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Distribution detection
+# ---------------------------------------------------------------------------
+
+source /etc/os-release
+OS_ID="${ID}"
+OS_VERSION="${VERSION_ID%%.*}"
+
+case "$OS_ID" in
+  ubuntu|debian) FAMILY="debian" ;;
+  almalinux|rocky|rhel|centos|fedora) FAMILY="rhel" ;;
+  *) fail "Unsupported distribution: ${ID} ${VERSION_ID}" ;;
+esac
+
+PHP="${WHMCS_PHP}"
+WEB_USER="www-data"
+[[ "$FAMILY" == "rhel" ]] && WEB_USER="nginx"
+
+step "Detected ${PRETTY_NAME} (${FAMILY} family), targeting PHP ${PHP}"
+
+# ---------------------------------------------------------------------------
+# Packages
+# ---------------------------------------------------------------------------
+
+step "Installing packages"
+
+# WHMCS's documented requirements plus what the provisioner needs: zip for
+# packages, intl and bcmath for currency handling. Split into two lists so a
+# distribution that has dropped an optional extension does not abort the
+# entire installation.
+PHP_EXTENSIONS=(cli fpm mysqlnd curl gd mbstring xml zip intl bcmath opcache)
+PHP_EXTENSIONS_OPTIONAL=(soap imap)
+
+if [[ "$FAMILY" == "debian" ]]; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+
+  apt-get install -y -qq \
+    ca-certificates curl wget gnupg lsb-release apt-transport-https \
+    software-properties-common unzip tar cron rsync >/dev/null
+
+  # Ondřej Surý's PPA is how you get a specific PHP version on Debian/Ubuntu.
+  if ! apt-cache policy "php${PHP}-fpm" 2>/dev/null | grep -q Candidate:\ [0-9]; then
+    note "Adding the PHP repository"
+    if [[ "$OS_ID" == "ubuntu" ]]; then
+      LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1
+    else
+      curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg
+      echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" \
+        > /etc/apt/sources.list.d/sury-php.list
+    fi
+    apt-get update -qq
+  fi
+
+  PACKAGES=(nginx mariadb-server)
+  for extension in "${PHP_EXTENSIONS[@]}"; do
+    PACKAGES+=("php${PHP}-${extension}")
+  done
+
+  apt-get install -y -qq "${PACKAGES[@]}" >/dev/null || fail "Package installation failed"
+
+  for extension in "${PHP_EXTENSIONS_OPTIONAL[@]}"; do
+    apt-get install -y -qq "php${PHP}-${extension}" >/dev/null 2>&1 \
+      || warn "Optional extension php${PHP}-${extension} is unavailable; continuing"
+  done
+
+  PHP_INI_DIR="/etc/php/${PHP}/fpm/conf.d"
+  PHP_CLI_INI_DIR="/etc/php/${PHP}/cli/conf.d"
+  PHP_FPM_SERVICE="php${PHP}-fpm"
+  PHP_FPM_SOCKET="/run/php/php${PHP}-fpm.sock"
+  PHP_EXT_DIR="$(php${PHP} -i 2>/dev/null | awk -F'=> ' '/^extension_dir/ {print $2; exit}')"
+else
+  dnf install -y -q epel-release >/dev/null 2>&1 || true
+  dnf install -y -q \
+    "https://rpms.remirepo.net/enterprise/remi-release-${OS_VERSION}.rpm" >/dev/null 2>&1 || true
+
+  dnf module reset -y php >/dev/null 2>&1 || true
+  dnf module enable -y "php:remi-${PHP}" >/dev/null 2>&1 || \
+    warn "Could not enable the remi PHP ${PHP} module; using the distribution default"
+
+  PACKAGES=(nginx mariadb-server unzip tar cronie rsync policycoreutils-python-utils php php-fpm)
+  for extension in "${PHP_EXTENSIONS[@]}"; do
+    case "$extension" in
+      cli|fpm) continue ;;
+      mysqlnd) PACKAGES+=("php-mysqlnd") ;;
+      *) PACKAGES+=("php-${extension}") ;;
+    esac
+  done
+
+  dnf install -y -q "${PACKAGES[@]}" >/dev/null || fail "Package installation failed"
+
+  for extension in "${PHP_EXTENSIONS_OPTIONAL[@]}"; do
+    dnf install -y -q "php-${extension}" >/dev/null 2>&1 \
+      || warn "Optional extension php-${extension} is unavailable; continuing"
+  done
+
+  PHP_INI_DIR="/etc/php.d"
+  PHP_CLI_INI_DIR="/etc/php.d"
+  PHP_FPM_SERVICE="php-fpm"
+  PHP_FPM_SOCKET="/run/php-fpm/www.sock"
+  PHP_EXT_DIR="$(php -i 2>/dev/null | awk -F'=> ' '/^extension_dir/ {print $2; exit}')"
+fi
+
+note "PHP $(php${PHP} -r 'echo PHP_VERSION;' 2>/dev/null || php -r 'echo PHP_VERSION;')"
+
+# ---------------------------------------------------------------------------
+# ionCube Loader — WHMCS will not run without it
+# ---------------------------------------------------------------------------
+
+step "Installing the ionCube Loader"
+
+if php${PHP} -m 2>/dev/null | grep -qi ioncube || php -m 2>/dev/null | grep -qi ioncube; then
+  note "Already loaded"
+else
+  ARCH="$(uname -m)"
+  case "$ARCH" in
+    x86_64)  IONCUBE_ARCH="x86-64" ;;
+    aarch64) IONCUBE_ARCH="aarch64" ;;
+    *) fail "No ionCube Loader for ${ARCH}. WHMCS cannot run on this machine." ;;
+  esac
+
+  TMP="$(mktemp -d)"
+
+  note "Downloading loaders for ${IONCUBE_ARCH}"
+  curl -fsSL "https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_${IONCUBE_ARCH}.tar.gz" \
+    -o "${TMP}/ioncube.tar.gz" || fail "Could not download the ionCube Loader"
+
+  tar -xzf "${TMP}/ioncube.tar.gz" -C "$TMP"
+
+  LOADER="${TMP}/ioncube/ioncube_loader_lin_${PHP}.so"
+  [[ -f "$LOADER" ]] || fail "ionCube does not ship a loader for PHP ${PHP}"
+
+  [[ -n "$PHP_EXT_DIR" && -d "$PHP_EXT_DIR" ]] || fail "Cannot determine the PHP extension directory"
+  install -m 0644 "$LOADER" "${PHP_EXT_DIR}/ioncube_loader.so"
+
+  # 00- prefix: ionCube must be the first Zend extension loaded.
+  for dir in "$PHP_INI_DIR" "$PHP_CLI_INI_DIR"; do
+    [[ -d "$dir" ]] || continue
+    printf 'zend_extension=%s/ioncube_loader.so\n' "$PHP_EXT_DIR" > "${dir}/00-ioncube.ini"
+  done
+
+  note "Installed $(basename "$LOADER")"
+  rm -rf "$TMP"
+fi
+
+# ---------------------------------------------------------------------------
+# PHP configuration
+# ---------------------------------------------------------------------------
+
+step "Applying WHMCS-appropriate PHP settings"
+
+for dir in "$PHP_INI_DIR" "$PHP_CLI_INI_DIR"; do
+  [[ -d "$dir" ]] || continue
+  backup "${dir}/99-whmcs.ini"
+  cat > "${dir}/99-whmcs.ini" <<'INI'
+; WHMCS + WordPress Theme Provisioner
+; Written by setup-whmcs.sh. Edit freely; it is only replaced on a re-run.
+
+memory_limit = 512M
+max_execution_time = 300
+max_input_time = 300
+max_input_vars = 5000
+post_max_size = 64M
+upload_max_filesize = 64M
+
+; Uploaded demo packages can be large; the addon caps them again in PHP.
+default_socket_timeout = 120
+
+; WHMCS reports these as required.
+allow_url_fopen = On
+allow_url_include = Off
+
+; Errors go to the log, never to a customer's browser.
+display_errors = Off
+display_startup_errors = Off
+log_errors = On
+error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+
+expose_php = Off
+session.cookie_httponly = 1
+session.cookie_samesite = "Lax"
+session.use_strict_mode = 1
+
+date.timezone = UTC
+
+opcache.enable = 1
+opcache.enable_cli = 0
+opcache.memory_consumption = 192
+opcache.max_accelerated_files = 20000
+opcache.validate_timestamps = 1
+opcache.revalidate_freq = 60
+INI
+done
+
+systemctl enable --now "$PHP_FPM_SERVICE" >/dev/null 2>&1 || true
+systemctl restart "$PHP_FPM_SERVICE"
+note "php-fpm restarted"
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+
+step "Configuring MariaDB"
+
+systemctl enable --now mariadb >/dev/null 2>&1 || systemctl enable --now mysqld >/dev/null 2>&1 || true
+
+backup /etc/mysql/mariadb.conf.d/99-whmcs.cnf
+MARIADB_CONF_DIR="/etc/mysql/mariadb.conf.d"
+[[ -d "$MARIADB_CONF_DIR" ]] || MARIADB_CONF_DIR="/etc/my.cnf.d"
+if [[ -d "$MARIADB_CONF_DIR" ]]; then
+  cat > "${MARIADB_CONF_DIR}/99-whmcs.cnf" <<'CNF'
+[mysqld]
+# WHMCS stores serialized data in TEXT columns and does its own escaping;
+# STRICT_TRANS_TABLES rejects rows it expects to be truncated.
+sql_mode = "NO_ENGINE_SUBSTITUTION"
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+max_allowed_packet = 64M
+innodb_file_per_table = 1
+CNF
+  systemctl restart mariadb 2>/dev/null || systemctl restart mysqld 2>/dev/null || true
+fi
+
+# Local socket auth as root; no password ever reaches the process list.
+mysql --protocol=socket <<SQL
+CREATE DATABASE IF NOT EXISTS \`${WHMCS_DB_NAME}\`
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${WHMCS_DB_USER}'@'localhost'
+  IDENTIFIED BY '${WHMCS_DB_PASSWORD}';
+ALTER USER '${WHMCS_DB_USER}'@'localhost' IDENTIFIED BY '${WHMCS_DB_PASSWORD}';
+GRANT ALL PRIVILEGES ON \`${WHMCS_DB_NAME}\`.* TO '${WHMCS_DB_USER}'@'localhost';
+FLUSH PRIVILEGES;
+SQL
+
+note "Database ${WHMCS_DB_NAME} and user ${WHMCS_DB_USER} ready"
+
+# ---------------------------------------------------------------------------
+# WHMCS files
+# ---------------------------------------------------------------------------
+
+step "Preparing ${WHMCS_WEBROOT}"
+
+mkdir -p "$WHMCS_WEBROOT"
+
+if [[ -n "${WHMCS_ARCHIVE_URL:-}" ]]; then
+  note "Downloading WHMCS"
+  curl -fsSL "$WHMCS_ARCHIVE_URL" -o /tmp/whmcs.zip || fail "Could not download the WHMCS archive"
+  WHMCS_ARCHIVE_FILE=/tmp/whmcs.zip
+fi
+
+if [[ -n "${WHMCS_ARCHIVE_FILE:-}" && -f "$WHMCS_ARCHIVE_FILE" ]]; then
+  if [[ -f "${WHMCS_WEBROOT}/init.php" ]]; then
+    warn "WHMCS is already installed here; leaving the existing files alone"
+  else
+    note "Extracting WHMCS"
+    TMP_EXTRACT="$(mktemp -d)"
+    unzip -q "$WHMCS_ARCHIVE_FILE" -d "$TMP_EXTRACT"
+
+    # WHMCS archives put everything under whmcs/; tolerate either shape.
+    SOURCE="$TMP_EXTRACT"
+    [[ -d "${TMP_EXTRACT}/whmcs" ]] && SOURCE="${TMP_EXTRACT}/whmcs"
+    cp -a "${SOURCE}/." "$WHMCS_WEBROOT/"
+    rm -rf "$TMP_EXTRACT"
+
+    # WHMCS ships these with a .new suffix for exactly this step.
+    [[ -f "${WHMCS_WEBROOT}/configuration.php.new" && ! -f "${WHMCS_WEBROOT}/configuration.php" ]] && \
+      mv "${WHMCS_WEBROOT}/configuration.php.new" "${WHMCS_WEBROOT}/configuration.php"
+    note "WHMCS extracted"
+  fi
+else
+  warn "No WHMCS archive supplied — the web root is prepared but empty"
+fi
+
+# Ownership and modes. configuration.php is 0400 once WHMCS has written it;
+# before installation it must stay writable, so 0640 is correct here.
+chown -R "${WEB_USER}:${WEB_USER}" "$WHMCS_WEBROOT"
+find "$WHMCS_WEBROOT" -type d -exec chmod 0755 {} \;
+find "$WHMCS_WEBROOT" -type f -exec chmod 0644 {} \;
+[[ -f "${WHMCS_WEBROOT}/configuration.php" ]] && chmod 0640 "${WHMCS_WEBROOT}/configuration.php"
+
+for writable in attachments downloads templates_c crons; do
+  [[ -d "${WHMCS_WEBROOT}/${writable}" ]] && chmod -R 0775 "${WHMCS_WEBROOT}/${writable}"
+done
+
+# ---------------------------------------------------------------------------
+# Provisioner storage and secrets
+# ---------------------------------------------------------------------------
+
+step "Preparing the theme provisioner"
+
+mkdir -p "${WTP_STORAGE_PATH}"/{agent,demos,themes,core}
+chown -R "${WEB_USER}:${WEB_USER}" "$WTP_STORAGE_PATH"
+chmod -R 0750 "$WTP_STORAGE_PATH"
+note "Package storage at ${WTP_STORAGE_PATH}"
+
+ENV_DIR="$(dirname "$WTP_ENV_PATH")"
+mkdir -p "$ENV_DIR"
+chmod 0750 "$ENV_DIR"
+chown "root:${WEB_USER}" "$ENV_DIR"
+
+if [[ -f "$WTP_ENV_PATH" ]] && grep -q '^WTP_MASTER_KEY=' "$WTP_ENV_PATH"; then
+  warn "An encryption key already exists at ${WTP_ENV_PATH}; keeping it"
+  warn "Replacing it would make every stored agent secret undecryptable."
+else
+  backup "$WTP_ENV_PATH"
+  MASTER_KEY="$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
+
+  cat > "$WTP_ENV_PATH" <<ENV
+# WHMCS WordPress Theme Provisioner — secrets and overrides.
+#
+# Read by the addon, the worker and the agent API. Never commit this file, and
+# never move it inside the web root.
+#
+# Losing WTP_MASTER_KEY makes every stored agent secret and every encrypted
+# job payload unreadable. Back it up wherever you keep your other keys.
+
+WTP_MASTER_KEY=${MASTER_KEY}
+WTP_STORAGE_PATH=${WTP_STORAGE_PATH}
+WTP_API_BASE_URL=https://${WHMCS_DOMAIN}
+WTP_ENFORCE_HTTPS=1
+WTP_LOG_LEVEL=info
+ENV
+
+  chown "root:${WEB_USER}" "$WTP_ENV_PATH"
+  chmod 0640 "$WTP_ENV_PATH"
+  note "Generated a new encryption key in ${WTP_ENV_PATH}"
+fi
+
+# The web user needs to find it without an environment variable.
+for dir in "$PHP_INI_DIR" "$PHP_CLI_INI_DIR"; do
+  [[ -d "$dir" ]] || continue
+  printf 'env[WTP_ENV_FILE] = %s\n' "$WTP_ENV_PATH" > "${dir}/99-wtp.ini" 2>/dev/null || true
+done
+# php-fpm pools read env[] from the pool file, not conf.d, so set it there too.
+for pool in "/etc/php/${PHP}/fpm/pool.d/www.conf" /etc/php-fpm.d/www.conf; do
+  [[ -f "$pool" ]] || continue
+  backup "$pool"
+  grep -q '^env\[WTP_ENV_FILE\]' "$pool" || printf '\nenv[WTP_ENV_FILE] = %s\n' "$WTP_ENV_PATH" >> "$pool"
+done
+
+# ---------------------------------------------------------------------------
+# nginx
+# ---------------------------------------------------------------------------
+
+step "Configuring nginx"
+
+NGINX_SITE="/etc/nginx/sites-available/whmcs.conf"
+NGINX_LINK="/etc/nginx/sites-enabled/whmcs.conf"
+if [[ ! -d /etc/nginx/sites-available ]]; then
+  NGINX_SITE="/etc/nginx/conf.d/whmcs.conf"
+  NGINX_LINK=""
+fi
+
+backup "$NGINX_SITE"
+cat > "$NGINX_SITE" <<NGINX
+# WHMCS + WordPress Theme Provisioner
+# Written by setup-whmcs.sh.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${WHMCS_DOMAIN};
+
+    # ACME needs plain HTTP; everything else is redirected.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        default_type "text/plain";
+    }
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${WHMCS_DOMAIN};
+
+    root ${WHMCS_WEBROOT};
+    index index.php index.html;
+
+    ssl_certificate     /etc/ssl/wtp/${WHMCS_DOMAIN}.crt;
+    ssl_certificate_key /etc/ssl/wtp/${WHMCS_DOMAIN}.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    client_max_body_size 64M;
+
+    # The provisioning API: one entry point, everything below it rewritten.
+    location /provisioning/v1 {
+        try_files \$uri /provisioning/v1/index.php\$is_args\$args;
+    }
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php\$ {
+        include fastcgi_params;
+        fastcgi_pass unix:${PHP_FPM_SOCKET};
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        fastcgi_param HTTPS on;
+        fastcgi_read_timeout 300;
+        fastcgi_buffers 16 16k;
+        fastcgi_buffer_size 32k;
+    }
+
+    # WHMCS's own recommended denials, plus this module's storage.
+    location ~ ^/(vendor|tests|modules/servers/[^/]+/lib)/ { deny all; }
+    location ~ ^/(configuration\.php|attachments|downloads|templates_c|crons) { deny all; }
+    location ~ /\.(?!well-known) { deny all; }
+    location ~* \.(sql|log|env|ini|bak|old)\$ { deny all; }
+
+    access_log /var/log/nginx/whmcs.access.log;
+    error_log  /var/log/nginx/whmcs.error.log;
+}
+NGINX
+
+[[ -n "$NGINX_LINK" ]] && ln -sf "$NGINX_SITE" "$NGINX_LINK"
+[[ -f /etc/nginx/sites-enabled/default ]] && rm -f /etc/nginx/sites-enabled/default
+
+# A self-signed placeholder so nginx starts before certbot has run.
+mkdir -p /etc/ssl/wtp
+if [[ ! -f "/etc/ssl/wtp/${WHMCS_DOMAIN}.crt" ]]; then
+  openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+    -keyout "/etc/ssl/wtp/${WHMCS_DOMAIN}.key" \
+    -out "/etc/ssl/wtp/${WHMCS_DOMAIN}.crt" \
+    -subj "/CN=${WHMCS_DOMAIN}" >/dev/null 2>&1
+  chmod 0600 "/etc/ssl/wtp/${WHMCS_DOMAIN}.key"
+  note "Created a temporary self-signed certificate"
+fi
+
+nginx -t >/dev/null 2>&1 || fail "The generated nginx configuration is invalid"
+systemctl enable --now nginx >/dev/null 2>&1 || true
+systemctl reload nginx
+note "nginx serving ${WHMCS_DOMAIN}"
+
+if [[ "$FAMILY" == "rhel" ]] && command -v setsebool >/dev/null 2>&1; then
+  setsebool -P httpd_can_network_connect 1 2>/dev/null || true
+  setsebool -P httpd_can_network_connect_db 1 2>/dev/null || true
+  command -v restorecon >/dev/null 2>&1 && restorecon -R "$WHMCS_WEBROOT" 2>/dev/null || true
+  note "SELinux booleans set for outbound connections"
+fi
+
+# ---------------------------------------------------------------------------
+# TLS
+# ---------------------------------------------------------------------------
+
+if [[ "$WHMCS_ISSUE_TLS" == "y" ]]; then
+  step "Requesting a Let's Encrypt certificate"
+
+  if [[ "$FAMILY" == "debian" ]]; then
+    apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
+  else
+    dnf install -y -q certbot python3-certbot-nginx >/dev/null
+  fi
+
+  mkdir -p /var/www/html
+  if certbot certonly --webroot -w /var/www/html \
+       -d "$WHMCS_DOMAIN" --email "$WHMCS_ADMIN_EMAIL" \
+       --agree-tos --non-interactive --keep-until-expiring >/dev/null 2>&1; then
+
+    LIVE="/etc/letsencrypt/live/${WHMCS_DOMAIN}"
+    ln -sf "${LIVE}/fullchain.pem" "/etc/ssl/wtp/${WHMCS_DOMAIN}.crt"
+    ln -sf "${LIVE}/privkey.pem"   "/etc/ssl/wtp/${WHMCS_DOMAIN}.key"
+    systemctl reload nginx
+    note "Certificate issued and installed"
+
+    # Renewal must reload nginx, or the new certificate is never served.
+    mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+    printf '#!/bin/sh\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+    chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+  else
+    warn "Certificate request failed — the self-signed placeholder is still in place."
+    warn "Point ${WHMCS_DOMAIN} at this server, then run:"
+    warn "  certbot certonly --webroot -w /var/www/html -d ${WHMCS_DOMAIN}"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Firewall
+# ---------------------------------------------------------------------------
+
+if [[ "$WHMCS_CONFIGURE_FIREWALL" == "y" ]]; then
+  step "Configuring the firewall"
+
+  if command -v ufw >/dev/null 2>&1; then
+    ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null 2>&1
+    ufw allow 80/tcp >/dev/null 2>&1
+    ufw allow 443/tcp >/dev/null 2>&1
+    yes | ufw enable >/dev/null 2>&1 || true
+    note "ufw: 22, 80 and 443 open"
+  elif command -v firewall-cmd >/dev/null 2>&1; then
+    systemctl enable --now firewalld >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-service=ssh   >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-service=http  >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-service=https >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    note "firewalld: ssh, http and https allowed"
+  else
+    warn "No ufw or firewalld found; configure your firewall manually"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Cron
+# ---------------------------------------------------------------------------
+
+step "Installing cron jobs"
+
+systemctl enable --now cron >/dev/null 2>&1 || systemctl enable --now crond >/dev/null 2>&1 || true
+
+PHP_BIN="$(command -v "php${PHP}" || command -v php)"
+CRON_FILE="/etc/cron.d/whmcs-wtp"
+backup "$CRON_FILE"
+
+# WHMCS 8 moved its cron out of the web root; support both layouts.
+WHMCS_CRON_PATH="${WHMCS_WEBROOT}/crons/cron.php"
+
+cat > "$CRON_FILE" <<CRON
+# WHMCS and WordPress Theme Provisioner
+# Written by setup-whmcs.sh.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+WTP_ENV_FILE=${WTP_ENV_PATH}
+
+# WHMCS's own scheduled tasks.
+*/5 * * * * ${WEB_USER} ${PHP_BIN} -q ${WHMCS_CRON_PATH} >/dev/null 2>&1
+
+# The provisioning queue: one bounded tick a minute.
+* * * * * ${WEB_USER} ${PHP_BIN} -q ${WHMCS_WEBROOT}/modules/addons/wpthemeprovisioner/cron/worker.php >/dev/null 2>&1
+CRON
+
+chmod 0644 "$CRON_FILE"
+note "Cron installed at ${CRON_FILE}"
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+
+step "Server preparation complete"
+
+note "PHP            $("$PHP_BIN" -r 'echo PHP_VERSION;')"
+note "ionCube        $("$PHP_BIN" -m 2>/dev/null | grep -qi ioncube && echo loaded || echo 'NOT LOADED — WHMCS will not start')"
+note "MariaDB        $(mysql --version | awk '{print $5}' | tr -d ,)"
+note "nginx          $(nginx -v 2>&1 | awk -F/ '{print $2}')"
+note "Web root       ${WHMCS_WEBROOT}"
+note "Storage        ${WTP_STORAGE_PATH}"
+note "Secrets        ${WTP_ENV_PATH}"
+note "Backups        ${BACKUP_DIR}"
+
+echo
