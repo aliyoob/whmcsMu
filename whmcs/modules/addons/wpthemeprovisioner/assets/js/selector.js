@@ -124,6 +124,16 @@
         this.themeInput = this.hiddenInput(this.catalogue.fields.theme, this.themeId);
         this.demoInput = this.hiddenInput(this.catalogue.fields.demo, this.demoId);
 
+        // An explicit anchor always wins: a heavily customised order form can
+        // place the picker exactly where it wants it (see docs/module-configuration.md).
+        var anchor = document.getElementById('wtp-picker-anchor');
+        if (anchor) {
+            anchor.appendChild(this.root);
+            this.form.addEventListener('submit', this.onSubmit.bind(this));
+            this.render();
+            return;
+        }
+
         var submit = findSubmit(this.form);
         if (submit && submit.parentNode) {
             var host = submit.closest ? (submit.closest('.form-group, .cart-buttons, div') || submit.parentNode)
