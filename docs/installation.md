@@ -112,8 +112,11 @@ agent's SHA-256.
 dist/whmcs/modules/addons/wpthemeprovisioner/   →  <whmcs>/modules/addons/wpthemeprovisioner/
 dist/whmcs/modules/servers/wpthemehost/         →  <whmcs>/modules/servers/wpthemehost/
 dist/whmcs/provisioning/                        →  <whmcs>/provisioning/
-dist/whmcs/includes/hooks/                      →  <whmcs>/includes/hooks/
 ```
+
+The order-form hooks ship inside the addon as
+`modules/addons/wpthemeprovisioner/hooks.php`, which WHMCS loads automatically
+for any active addon — there is nothing to place in `includes/hooks`.
 
 Or let the deploy script do it:
 
@@ -258,8 +261,7 @@ DROP TABLE mod_wtp_download_grants, mod_wtp_rate_limits, mod_wtp_idempotency,
 sudo rm -rf /var/lib/whmcs-wtp /etc/whmcs-wtp
 sudo rm -rf /var/www/whmcs/modules/addons/wpthemeprovisioner \
             /var/www/whmcs/modules/servers/wpthemehost \
-            /var/www/whmcs/provisioning \
-            /var/www/whmcs/includes/hooks/wpthemeprovisioner.php
+            /var/www/whmcs/provisioning
 sudo rm -f /etc/cron.d/whmcs-wtp
 ```
 

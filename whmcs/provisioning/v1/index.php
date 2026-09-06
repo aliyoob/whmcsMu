@@ -71,7 +71,13 @@ ob_start();
 
 try {
     $container = \Wtp\Addon\Container::boot();
-    $request = \Wtp\Addon\Api\Request::fromGlobals('/provisioning/v1');
+
+    // The base path is configurable (WTP_API_PATH) so the endpoint can be
+    // mounted elsewhere; the router must strip whatever it is actually mounted
+    // at, or every route below it becomes a 404.
+    $basePath = $container->config()->getString('api_path', '/provisioning/v1');
+
+    $request = \Wtp\Addon\Api\Request::fromGlobals($basePath);
     $response = (new \Wtp\Addon\Api\Router($container))->handle($request);
 } catch (\Throwable $e) {
     error_log('[WTP] provisioning endpoint bootstrap failure: ' . $e->getMessage());

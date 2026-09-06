@@ -100,13 +100,6 @@ do
     "${VPS_SSH_USER}@${VPS_HOST}:${WHMCS_WEBROOT}/${component}/"
 done
 
-# The hooks file lives among WHMCS's own, so it is copied rather than synced.
-info "→ includes/hooks"
-rsync -az -e "$RSYNC_SSH" \
-  "${REPO_ROOT}/dist/whmcs/includes/hooks/" \
-  "${VPS_SSH_USER}@${VPS_HOST}:${WHMCS_WEBROOT}/includes/hooks/" \
-  $([[ "$DRY_RUN" == "1" ]] && echo "--dry-run")
-
 if [[ "$DRY_RUN" == "1" ]]; then
   warn "Dry run: nothing was changed on the server."
   exit 0

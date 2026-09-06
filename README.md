@@ -30,10 +30,9 @@ WHMCS order ──► provisioning job ──► cPanel account ──► databa
 
 | Path | What it is |
 |---|---|
-| `whmcs/modules/addons/wpthemeprovisioner/` | The addon: catalogue, job queue, agent API, admin UI, worker |
+| `whmcs/modules/addons/wpthemeprovisioner/` | The addon: catalogue, job queue, agent API, admin UI, worker, order-form hooks |
 | `whmcs/modules/servers/wpthemehost/` | The provisioning module for the hosting product |
 | `whmcs/provisioning/v1/` | The public agent API entry point |
-| `whmcs/includes/hooks/` | Order-form integration |
 | `wordpress/mu-plugins/whmcs-theme-provisioner/` | The agent that runs inside each provisioned site |
 | `bootstrap/wtp-bootstrap.php` | The single-file installer that turns a bare account into WordPress |
 | `shared/` | Code used by **both** sides: signing, safe extraction, redaction, the job state machine |
