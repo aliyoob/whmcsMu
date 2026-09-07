@@ -306,20 +306,40 @@ fi
 # DNS is worth checking before certbot spends a rate-limit attempt on it.
 WHMCS_ISSUE_TLS_DEFAULT="y"
 if command -v dig >/dev/null 2>&1 || command -v host >/dev/null 2>&1; then
+  # `|| true` is not decoration: dig exits 9 when it cannot reach a resolver,
+  # and an unguarded command substitution under set -e would end the whole
+  # deployment there — before anything had been done, with a bare exit code.
+  # A machine that cannot resolve DNS can still perfectly well deploy.
   if command -v dig >/dev/null 2>&1; then
-    RESOLVED="$(dig +short "$WHMCS_DOMAIN" A | tail -1)"
+    RESOLVED="$(dig +short "$WHMCS_DOMAIN" A 2>/dev/null | grep -E '^[0-9.]+$' | tail -1 || true)"
   else
-    RESOLVED="$(host -t A "$WHMCS_DOMAIN" 2>/dev/null | awk '/has address/ {print $NF; exit}')"
+    RESOLVED="$(host -t A "$WHMCS_DOMAIN" 2>/dev/null | awk '/has address/ {print $NF; exit}' || true)"
   fi
 
   if [[ -z "$RESOLVED" ]]; then
-    warn "${WHMCS_DOMAIN} does not resolve yet."
+    warn "Could not resolve ${WHMCS_DOMAIN} from this machine."
+    warn "That may just mean this machine has no DNS — the server is asked again"
+    warn "before a certificate is requested."
     WHMCS_ISSUE_TLS_DEFAULT="n"
   elif [[ "$RESOLVED" != "$VPS_HOST" && "$RESOLVED" != "$REMOTE_IP" ]]; then
     warn "${WHMCS_DOMAIN} resolves to ${RESOLVED}, not this server (${REMOTE_IP:-$VPS_HOST})."
     WHMCS_ISSUE_TLS_DEFAULT="n"
   else
     success "${WHMCS_DOMAIN} → ${RESOLVED}"
+  fi
+fi
+
+# The local machine may have no DNS at all; the server always does, and it is
+# the one certbot's validation actually has to satisfy.
+if [[ "$WHMCS_ISSUE_TLS_DEFAULT" == "n" ]]; then
+  SERVER_RESOLVED="$(remote_value "getent hosts '${WHMCS_DOMAIN}' 2>/dev/null | awk '{print \$1}'" || true)"
+  if [[ -n "$SERVER_RESOLVED" ]]; then
+    if [[ "$SERVER_RESOLVED" == "$VPS_HOST" || "$SERVER_RESOLVED" == "$REMOTE_IP" ]]; then
+      success "${WHMCS_DOMAIN} → ${SERVER_RESOLVED} (resolved by the server)"
+      WHMCS_ISSUE_TLS_DEFAULT="y"
+    else
+      warn "The server resolves ${WHMCS_DOMAIN} to ${SERVER_RESOLVED}, not itself."
+    fi
   fi
 fi
 
