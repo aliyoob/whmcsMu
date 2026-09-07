@@ -618,7 +618,14 @@ if [[ "$SKIP_DEPLOY" == "0" ]]; then
 
   info "Packing…"
   BUNDLE="$(mktemp -d)"
-  tar -czf "${BUNDLE}/wtp-whmcs.tar.gz" -C "${REPO_ROOT}/dist/whmcs" .
+  # COPYFILE_DISABLE stops macOS tar embedding ._ resource forks; --no-xattrs
+  # stops it embedding extended attributes that GNU tar then warns about, once
+  # per file, for every file in the archive.
+  TAR_OPTS=()
+  if tar --no-xattrs -cf /dev/null -T /dev/null 2>/dev/null; then
+    TAR_OPTS+=(--no-xattrs)
+  fi
+  COPYFILE_DISABLE=1 tar "${TAR_OPTS[@]}" -czf "${BUNDLE}/wtp-whmcs.tar.gz" -C "${REPO_ROOT}/dist/whmcs" .
 
   info "Uploading the module ($(du -h "${BUNDLE}/wtp-whmcs.tar.gz" | cut -f1))…"
   push "${BUNDLE}/wtp-whmcs.tar.gz" "${REMOTE_WORKDIR}/wtp-whmcs.tar.gz"
@@ -648,7 +655,9 @@ if [ -z "\$WEB_USER" ] || [ "\$WEB_USER" = "root" ]; then
   WEB_USER=\$(id -u www-data >/dev/null 2>&1 && echo www-data || echo nginx)
 fi
 
-tar -xzf "\$WORKDIR/wtp-whmcs.tar.gz" -C "\$WEBROOT"
+# --no-same-owner: the archive was built on a workstation, and without this
+# tar would stamp that machine's numeric uid/gid onto the web root.
+tar --no-same-owner -xzf "\$WORKDIR/wtp-whmcs.tar.gz" -C "\$WEBROOT"
 
 install -D -m 0640 -o "\$WEB_USER" -g "\$WEB_USER" \
   "\$WORKDIR/agent.zip" "\$STORAGE/agent/whmcs-theme-provisioner.zip"
@@ -663,6 +672,8 @@ do
   find "\$path" -type d -exec chmod 0755 {} +
   find "\$path" -type f -exec chmod 0644 {} +
 done
+
+chown "\$WEB_USER:\$WEB_USER" "\$WEBROOT"
 
 echo "installed as \$WEB_USER"
 REMOTE_DEPLOY
@@ -752,8 +763,16 @@ fi
 
 heading "5/5  Verifying"
 
-WEB_USER="$(remote_value "stat -c '%U' '${WHMCS_WEBROOT}' 2>/dev/null || echo www-data")"
-SELFTEST_OUTPUT="$(remote "${SUDO} -u '${WEB_USER}' env WTP_ENV_FILE='${WTP_ENV_PATH}' \
+# Read the owner from a file the deployment definitely chowned, not from the
+# directory, whose ownership can come from an archive built elsewhere.
+WEB_USER="$(remote_value "stat -c '%U' '${WHMCS_WEBROOT}/index.php' 2>/dev/null || true")"
+case "$WEB_USER" in
+  ''|UNKNOWN|root) WEB_USER="$(remote_value "id -u www-data >/dev/null 2>&1 && echo www-data || echo nginx")" ;;
+esac
+
+# `sudo -n -u` and not "$SUDO -u": $SUDO is empty when we connect as root, and
+# the command then began with a bare "-u".
+SELFTEST_OUTPUT="$(remote "sudo -n -u '${WEB_USER}' env WTP_ENV_FILE='${WTP_ENV_PATH}' \
   php '${WHMCS_WEBROOT}/modules/addons/wpthemeprovisioner/cron/worker.php' --selftest" 2>&1 | tr -d '\r' || true)"
 
 echo "$SELFTEST_OUTPUT" | sed 's/^/  /'
@@ -876,7 +895,7 @@ WHMCS is installed, hardened and ready.
   ${C_BOLD}Verify any time${C_RESET}
 
      ssh ${TARGET} \\
-       "${SUDO} -u ${WEB_USER} php ${WHMCS_WEBROOT}/modules/addons/wpthemeprovisioner/cron/worker.php --selftest"
+       "sudo -u ${WEB_USER} php ${WHMCS_WEBROOT}/modules/addons/wpthemeprovisioner/cron/worker.php --selftest"
 
 NEXT
 
@@ -900,8 +919,8 @@ The server is ready. WHMCS itself still needs installing.
 
   ${C_BOLD}2  Lock it down${C_RESET}
 
-     ssh ${TARGET} '${SUDO} rm -rf ${WHMCS_WEBROOT}/install'
-     ssh ${TARGET} '${SUDO} chmod 0400 ${WHMCS_WEBROOT}/configuration.php'
+     ssh ${TARGET} 'rm -rf ${WHMCS_WEBROOT}/install'
+     ssh ${TARGET} 'chmod 0400 ${WHMCS_WEBROOT}/configuration.php'
 
      Then rename ${WHMCS_WEBROOT}/admin to something private and set
      \$customadminpath in configuration.php to match.
@@ -914,7 +933,7 @@ The server is ready. WHMCS itself still needs installing.
   ${C_BOLD}4  Check it${C_RESET}
 
      ssh ${TARGET} \\
-       "${SUDO} -u ${WEB_USER} php ${WHMCS_WEBROOT}/modules/addons/wpthemeprovisioner/cron/worker.php --selftest"
+       "sudo -u ${WEB_USER} php ${WHMCS_WEBROOT}/modules/addons/wpthemeprovisioner/cron/worker.php --selftest"
 
 ${C_BOLD}Then${C_RESET}
   · Add a cPanel server:  System Settings → Servers  (use a WHM API token)

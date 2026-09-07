@@ -504,7 +504,11 @@ step "Configuring nginx"
 # directive. Ubuntu 24.04 ships 1.24.0, so both forms are still needed.
 NGINX_VERSION="$(nginx -v 2>&1 | sed -E 's#.*/([0-9.]+).*#\1#')"
 nginx_at_least() {
-    [ "$(printf '%s\n%s\n' "$1" "$NGINX_VERSION" | sort -V | head -1)" = "$1" ]
+    # sort into a variable rather than piping to head: head exits after one
+    # line and SIGPIPEs sort, which pipefail then reports as a failure.
+    local ordered
+    ordered="$(printf '%s\n%s\n' "$1" "$NGINX_VERSION" | sort -V)"
+    [ "${ordered%%$'\n'*}" = "$1" ]
 }
 
 if nginx_at_least 1.25.1; then
