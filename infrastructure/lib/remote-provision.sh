@@ -500,6 +500,23 @@ done
 
 step "Configuring nginx"
 
+# `http2 on;` arrived in nginx 1.25.1. Before that it belongs on the listen
+# directive. Ubuntu 24.04 ships 1.24.0, so both forms are still needed.
+NGINX_VERSION="$(nginx -v 2>&1 | sed -E 's#.*/([0-9.]+).*#\1#')"
+nginx_at_least() {
+    [ "$(printf '%s\n%s\n' "$1" "$NGINX_VERSION" | sort -V | head -1)" = "$1" ]
+}
+
+if nginx_at_least 1.25.1; then
+    NGINX_LISTEN_443="listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;"
+else
+    NGINX_LISTEN_443="listen 443 ssl http2;
+    listen [::]:443 ssl http2;"
+fi
+note "nginx ${NGINX_VERSION}"
+
 NGINX_SITE="/etc/nginx/sites-available/whmcs.conf"
 NGINX_LINK="/etc/nginx/sites-enabled/whmcs.conf"
 if [[ ! -d /etc/nginx/sites-available ]]; then
@@ -528,9 +545,7 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    ${NGINX_LISTEN_443}
     server_name ${WHMCS_DOMAIN};
 
     root ${WHMCS_WEBROOT};
@@ -586,15 +601,32 @@ NGINX
 # A self-signed placeholder so nginx starts before certbot has run.
 mkdir -p /etc/ssl/wtp
 if [[ ! -f "/etc/ssl/wtp/${WHMCS_DOMAIN}.crt" ]]; then
-  openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
-    -keyout "/etc/ssl/wtp/${WHMCS_DOMAIN}.key" \
-    -out "/etc/ssl/wtp/${WHMCS_DOMAIN}.crt" \
-    -subj "/CN=${WHMCS_DOMAIN}" >/dev/null 2>&1
+  if ! openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+       -keyout "/etc/ssl/wtp/${WHMCS_DOMAIN}.key" \
+       -out "/etc/ssl/wtp/${WHMCS_DOMAIN}.crt" \
+       -subj "/CN=${WHMCS_DOMAIN}" > /tmp/wtp-openssl.log 2>&1; then
+    warn "openssl could not create the placeholder certificate:"
+    sed 's/^/      /' /tmp/wtp-openssl.log >&2
+    rm -f /tmp/wtp-openssl.log
+    fail "Cannot create a TLS certificate; nginx has nothing to serve HTTPS with."
+  fi
+  rm -f /tmp/wtp-openssl.log
   chmod 0600 "/etc/ssl/wtp/${WHMCS_DOMAIN}.key"
   note "Created a temporary self-signed certificate"
 fi
 
-nginx -t >/dev/null 2>&1 || fail "The generated nginx configuration is invalid"
+if ! nginx -t > /tmp/wtp-nginx-test.log 2>&1; then
+    warn "nginx rejected the generated configuration:"
+    sed 's/^/      /' /tmp/wtp-nginx-test.log >&2
+
+    # Leave the server as it was rather than with a vhost that will not load.
+    [ -n "$NGINX_LINK" ] && rm -f "$NGINX_LINK"
+    rm -f /tmp/wtp-nginx-test.log
+    fail "The generated nginx configuration is invalid (the reason is above).
+  The offending file was left at ${NGINX_SITE} and unlinked from sites-enabled,
+  so nginx keeps running with its previous configuration."
+fi
+rm -f /tmp/wtp-nginx-test.log
 systemctl enable --now nginx >/dev/null 2>&1 || true
 systemctl reload nginx
 note "nginx serving ${WHMCS_DOMAIN}"
