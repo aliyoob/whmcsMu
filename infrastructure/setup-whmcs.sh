@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     --deploy-only) MODE="deploy"; shift ;;
     --yes|-y)      WTP_NONINTERACTIVE=1; shift ;;
     --help|-h)
-      sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      awk 'NR>1 && /^#/ { sub(/^#[ ]?/, ""); print; next } NR>1 { exit }' "${BASH_SOURCE[0]}"
       exit 0
       ;;
     *) die "Unknown option: $1 (try --help)" ;;

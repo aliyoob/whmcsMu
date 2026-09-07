@@ -36,6 +36,10 @@ clean: ## Remove build output
 	@rm -rf dist
 	@echo "cleaned"
 
+.PHONY: deploy
+deploy: ## Full deployment to a server (asks for the password)
+	@./infrastructure/deploy-all.sh
+
 .PHONY: keygen
 keygen: ## Print a new master key
 	@$(PHP) bin/wtp-keygen.php

@@ -54,18 +54,25 @@ WHMCS order ──► provisioning job ──► cPanel account ──► databa
 | [agent.md](docs/agent.md) | Working on the WordPress side |
 | [security.md](docs/security.md) | Reviewing the threat model, or rotating a key |
 | [troubleshooting.md](docs/troubleshooting.md) | Something is stuck |
+| [quickstart-fa.md](docs/quickstart-fa.md) | راهنمای کامل راه‌اندازی به فارسی |
 
 ## Quick start
 
 ```bash
-# 1. Prepare a VPS and install WHMCS's dependencies
-./infrastructure/setup-whmcs.sh
+# 1. Everything: prepares the server, installs WHMCS's dependencies,
+#    deploys this module and verifies the result. Asks for the server
+#    password; takes 3–10 minutes.
+./infrastructure/deploy-all.sh
 
 # 2. Finish the WHMCS web installer by hand (licence key, admin account)
 
 # 3. Activate "WordPress Theme Provisioner" in WHMCS, then verify
 ssh you@server 'php /var/www/whmcs/modules/addons/wpthemeprovisioner/cron/worker.php --selftest'
 ```
+
+`deploy-all.sh` is the one-command path. `setup-whmcs.sh` (server only) and
+`deploy.sh` (module only) are the same work split in two, for when you want
+one without the other.
 
 Then add a theme and a demo (see [theme-demo.md](docs/theme-demo.md)), point a
 hosting product at the `wpthemehost` module, and enable selection for it under

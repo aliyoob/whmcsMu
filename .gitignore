@@ -34,3 +34,6 @@ whmcs/modules/addons/wpthemeprovisioner/lib/shared/Wtp/
 whmcs/modules/addons/wpthemeprovisioner/lib/shared/autoload.php
 wordpress/mu-plugins/whmcs-theme-provisioner/shared/Wtp/
 wordpress/mu-plugins/whmcs-theme-provisioner/shared/autoload.php
+
+# Credentials written by deploy-all.sh
+infrastructure/credentials-*.txt
