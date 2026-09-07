@@ -100,7 +100,16 @@ if [[ "$FAMILY" == "debian" ]]; then
   # would hang forever with nobody there to answer it.
   APT_OPTS=(-y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
-  apt-get update -qq
+  # `apt-get update` returns non-zero if any single source fails, and under
+  # set -e that used to end the run with no message at all — the hardest kind
+  # of failure to diagnose. Report it and continue: a stale index is usually
+  # still workable, and the install below will say so plainly if it is not.
+  if ! apt-get update -qq 2> /tmp/wtp-apt-update.log; then
+    warn "apt-get update reported a problem:"
+    tail -10 /tmp/wtp-apt-update.log | sed 's/^/      /' >&2
+    warn "Continuing — the package installation below will fail clearly if this matters."
+  fi
+  rm -f /tmp/wtp-apt-update.log
 
   apt-get install "${APT_OPTS[@]}" \
     ca-certificates curl wget gnupg lsb-release apt-transport-https \
@@ -142,7 +151,7 @@ if [[ "$FAMILY" == "debian" ]]; then
     fi
 
     if [ "$REPO_OK" = "1" ]; then
-      apt-get update -qq || REPO_OK=0
+      apt-get update -qq 2>> "$REPO_LOG" || REPO_OK=0
     fi
 
     if [ "$REPO_OK" = "1" ] && php_available "$PHP"; then
