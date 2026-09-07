@@ -21,6 +21,34 @@ source "$ANSWERS_FILE"
 BACKUP_DIR="/var/backups/wtp-setup-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$BACKUP_DIR"
 
+# ---------------------------------------------------------------------------
+# Keep apt from restarting the service we arrived on
+# ---------------------------------------------------------------------------
+#
+# Ubuntu 22.04 and newer ship `needrestart`, which inspects running processes
+# after every package operation and restarts anything using an outdated
+# library. One of those things is ssh — so installing PHP can kill the very
+# connection driving the installation, halfway through.
+#
+# `l` means list only: report what would need restarting and touch nothing.
+# The dropped file covers the case where a package operation spawns its own
+# environment, which the variables alone would not reach.
+
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=l
+export NEEDRESTART_SUSPEND=1
+
+if [ -d /etc/needrestart ]; then
+    mkdir -p /etc/needrestart/conf.d
+    cat > /etc/needrestart/conf.d/99-wtp.conf <<'NRCONF'
+# Written by the WHMCS provisioner during installation.
+# List services that need restarting; never restart them automatically —
+# restarting sshd would sever the connection running this script.
+$nrconf{restart} = 'l';
+$nrconf{kernelhints} = 0;
+NRCONF
+fi
+
 step()  { printf '\n\033[1m▸ %s\033[0m\n' "$*"; }
 note()  { printf '  %s\n' "$*"; }
 warn()  { printf '  \033[33m! %s\033[0m\n' "$*" >&2; }
@@ -68,10 +96,13 @@ PHP_EXTENSIONS=(cli fpm mysqlnd curl gd mbstring xml zip intl bcmath opcache)
 PHP_EXTENSIONS_OPTIONAL=(soap imap)
 
 if [[ "$FAMILY" == "debian" ]]; then
-  export DEBIAN_FRONTEND=noninteractive
+  # Keep existing config files without prompting: an interactive dpkg question
+  # would hang forever with nobody there to answer it.
+  APT_OPTS=(-y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+
   apt-get update -qq
 
-  apt-get install -y -qq \
+  apt-get install "${APT_OPTS[@]}" \
     ca-certificates curl wget gnupg lsb-release apt-transport-https \
     software-properties-common unzip tar cron rsync >/dev/null
 
@@ -93,10 +124,10 @@ if [[ "$FAMILY" == "debian" ]]; then
     PACKAGES+=("php${PHP}-${extension}")
   done
 
-  apt-get install -y -qq "${PACKAGES[@]}" >/dev/null || fail "Package installation failed"
+  apt-get install "${APT_OPTS[@]}" "${PACKAGES[@]}" >/dev/null || fail "Package installation failed"
 
   for extension in "${PHP_EXTENSIONS_OPTIONAL[@]}"; do
-    apt-get install -y -qq "php${PHP}-${extension}" >/dev/null 2>&1 \
+    apt-get install "${APT_OPTS[@]}" "php${PHP}-${extension}" >/dev/null 2>&1 \
       || warn "Optional extension php${PHP}-${extension} is unavailable; continuing"
   done
 
@@ -494,7 +525,7 @@ if [[ "$WHMCS_ISSUE_TLS" == "y" ]]; then
   step "Requesting a Let's Encrypt certificate"
 
   if [[ "$FAMILY" == "debian" ]]; then
-    apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
+    apt-get install "${APT_OPTS[@]}" certbot python3-certbot-nginx >/dev/null
   else
     dnf install -y -q certbot python3-certbot-nginx >/dev/null
   fi

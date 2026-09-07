@@ -144,6 +144,75 @@ remote_value() { wtp_ssh_value "${SSH_OPTS[@]}" "$TARGET" "$@"; }
 remote_tty()   { wtp_ssh -t "${SSH_OPTS[@]}" "$TARGET" "$@"; }
 push()         { wtp_scp "${SCP_OPTS[@]}" "$1" "${TARGET}:$2" >/dev/null; }
 
+# Run a long script on the server, detached, streaming its output.
+#
+# Package installation can take ten minutes and restart system services. If
+# that severs the SSH session, a foreground run dies with it and leaves the
+# server half-configured. So the script is started with setsid+nohup — owned by
+# init, not by our connection — and we merely watch its log. A dropped
+# connection costs us the view, not the work: we reconnect and carry on from
+# the line we had reached.
+#
+#   run_remote_script_detached <local-file> [extra files...]
+run_remote_script_detached() {
+  local script="$1"; shift
+  local name="wtp-$(random_token 8).sh"
+  local log="${REMOTE_WORKDIR}/${name}.log"
+  local statusfile="${REMOTE_WORKDIR}/${name}.status"
+
+  push "$script" "${REMOTE_WORKDIR}/${name}"
+  local extra
+  for extra in "$@"; do
+    push "$extra" "${REMOTE_WORKDIR}/$(basename "$extra")"
+  done
+
+  # setsid detaches from the session so a closing SSH connection cannot signal
+  # the job. It comes from util-linux and is on every mainstream distribution,
+  # but nohup alone is a perfectly good fallback if some image lacks it.
+  remote "chmod 700 '${REMOTE_WORKDIR}/${name}'; \
+          LAUNCH=nohup; command -v setsid >/dev/null 2>&1 && LAUNCH='setsid nohup'; \
+          \$LAUNCH bash -c '${SUDO} bash \"${REMOTE_WORKDIR}/${name}\" > \"${log}\" 2>&1; \
+                            echo \$? > \"${statusfile}\"' \
+          < /dev/null > /dev/null 2>&1 &" >/dev/null \
+    || return 1
+
+  local offset=1
+  local attempt=0
+  local status=""
+
+  while [ "$attempt" -lt 40 ]; do
+    attempt=$((attempt + 1))
+
+    # One connection streams the log and returns when the run finishes.
+    # `tail -F` survives the file being rotated or created late.
+    remote_tty "tail -n +${offset} -F '${log}' 2>/dev/null & \
+                TAILPID=\$!; \
+                while [ ! -f '${statusfile}' ]; do sleep 2; done; \
+                sleep 2; kill \$TAILPID 2>/dev/null; exit 0" 2>/dev/null || true
+
+    status="$(remote_value "cat '${statusfile}' 2>/dev/null" || true)"
+    if [ -n "$status" ]; then
+      break
+    fi
+
+    # The stream dropped but the work is still running under init. Resume from
+    # wherever we got to, so nothing is printed twice.
+    offset="$(remote_value "wc -l < '${log}' 2>/dev/null" || echo 1)"
+    offset=$((offset + 1))
+    warn "Connection interrupted — the installation is still running. Reattaching…"
+    sleep 5
+  done
+
+  if [ -z "$status" ]; then
+    error "Lost contact with the server while it was working."
+    error "The installation may still be running. Check with:"
+    error "  ssh ${TARGET} 'tail -f ${log}'"
+    return 1
+  fi
+
+  return "$status"
+}
+
 # Run a locally-written script on the server.
 #
 # Not a heredoc piped into ssh: under the expect strategy that heredoc becomes
@@ -428,10 +497,14 @@ ANSWERS
   info "This takes 3–10 minutes depending on the server."
   echo
 
-  remote_tty "chmod +x ${REMOTE_WORKDIR}/remote-provision.sh && \
-              ${SUDO} ${REMOTE_WORKDIR}/remote-provision.sh ${REMOTE_WORKDIR}/answers.env" \
-    || die "Server preparation failed. The output above says where.
-  Nothing was left half-configured: re-run this script once the cause is fixed."
+  PROVISION_RUNNER="$(mktemp)"
+  printf "set -euo pipefail\nbash '%s/remote-provision.sh' '%s/answers.env'\n" \
+    "$REMOTE_WORKDIR" "$REMOTE_WORKDIR" > "$PROVISION_RUNNER"
+
+  run_remote_script_detached "$PROVISION_RUNNER" \
+    || { rm -f "$PROVISION_RUNNER"; die "Server preparation failed. The output above says where.
+  Nothing was left half-configured: re-run this script once the cause is fixed."; }
+  rm -f "$PROVISION_RUNNER"
 
   success "Server prepared"
 else

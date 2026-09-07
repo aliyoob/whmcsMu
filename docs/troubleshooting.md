@@ -31,6 +31,42 @@ without it the worker cannot find the master key and exits.
 
 ---
 
+## Server preparation stops with "Connection to … closed"
+
+Typically right after a line reading `Scanning processes...`:
+
+```
+▸ Installing packages
+Scanning processes...
+Scanning candidates...
+  Adding the PHP repository
+Scanning processes...
+Connection to 203.0.113.10 closed.
+✗ Server preparation failed.
+```
+
+That is `needrestart`, which Ubuntu 22.04 and newer run after every package
+operation. It restarts any service using an outdated library — and one of those
+services is `ssh`, so installing PHP severs the connection driving the
+installation.
+
+Current versions of this project prevent it: the provisioner drops
+`/etc/needrestart/conf.d/99-wtp.conf` setting `$nrconf{restart} = 'l'` (list
+only, restart nothing) before touching apt, and runs the whole preparation
+detached under `setsid`, so even a connection lost for some other reason no
+longer kills the work. Losing the connection now costs you the view, not the
+installation: the script reconnects and resumes streaming from where it was.
+
+If you are on an older copy, `git pull` and re-run. Re-running is safe.
+
+To watch a run that has become detached from your terminal:
+
+```bash
+ssh root@server 'tail -f /tmp/wtp-deploy-*/wtp-*.log'
+```
+
+---
+
 ## The automated WHMCS installation failed
 
 The script drives WHMCS's own `bin/installer.php`. When it exits non-zero, the
