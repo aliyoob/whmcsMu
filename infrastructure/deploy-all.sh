@@ -244,13 +244,32 @@ ask_yes_no WHMCS_CONFIGURE_FIREWALL "Configure the firewall (allow 22, 80, 443)?
 
 echo
 echo "  WHMCS is licensed software, so its archive cannot be downloaded"
-echo "  automatically. Download whmcs.zip from your WHMCS members area first."
+echo "  automatically. Get whmcs.zip from your members area first:"
+echo "    https://www.whmcs.com/members/  →  Downloads  →  Latest Version"
+echo
+echo "  Then give the path to it here. Dragging the file into this terminal"
+echo "  pastes its path for you."
+echo
+echo "  Or press Enter to skip: the server is prepared completely and you come"
+echo "  back later with:  ./infrastructure/deploy-all.sh --skip-server"
 echo
 ask WHMCS_ARCHIVE "Path to whmcs.zip on this machine (or a URL, or 'skip')" "skip"
 
+# Dragging a file into a terminal wraps the path in quotes and escapes spaces.
+WHMCS_ARCHIVE="$(printf '%s' "$WHMCS_ARCHIVE" | sed "s/^['\"]//; s/['\"]$//; s/\\\\ / /g")"
+
 if [[ "$WHMCS_ARCHIVE" != "skip" && "$WHMCS_ARCHIVE" != http* ]]; then
   WHMCS_ARCHIVE="${WHMCS_ARCHIVE/#\~/$HOME}"
-  [[ -f "$WHMCS_ARCHIVE" ]] || die "No archive at ${WHMCS_ARCHIVE}"
+
+  if [[ ! -f "$WHMCS_ARCHIVE" ]]; then
+    die "No file at ${WHMCS_ARCHIVE}
+
+  Check the path, or press Enter at that prompt to skip WHMCS for now and
+  prepare the server anyway."
+  fi
+  if [[ "$WHMCS_ARCHIVE" != *.zip ]]; then
+    warn "That does not end in .zip — make sure it is the WHMCS archive."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -417,6 +436,35 @@ ANSWERS
   success "Server prepared"
 else
   heading "1/5  Preparing the server — skipped"
+
+  if [[ "$WHMCS_ARCHIVE" != "skip" ]] \
+     && ! remote_out "test -f '${WHMCS_WEBROOT}/init.php' && echo present" | grep -q present; then
+    info "The web root is empty — putting the WHMCS files in place."
+
+    EXTRACT_ANSWERS="$(mktemp)"
+    chmod 600 "$EXTRACT_ANSWERS"
+    printf "WHMCS_WEBROOT='%s'\n" "$WHMCS_WEBROOT" > "$EXTRACT_ANSWERS"
+
+    if [[ "$WHMCS_ARCHIVE" == http* ]]; then
+      printf "WHMCS_ARCHIVE_URL='%s'\n" "$WHMCS_ARCHIVE" >> "$EXTRACT_ANSWERS"
+    else
+      info "Uploading WHMCS ($(du -h "$WHMCS_ARCHIVE" | cut -f1))…"
+      push "$WHMCS_ARCHIVE" "${REMOTE_WORKDIR}/whmcs.zip"
+      printf "WHMCS_ARCHIVE_FILE='%s'\n" "${REMOTE_WORKDIR}/whmcs.zip" >> "$EXTRACT_ANSWERS"
+    fi
+
+    push "$EXTRACT_ANSWERS" "${REMOTE_WORKDIR}/extract.env"
+    rm -f "$EXTRACT_ANSWERS"
+
+    EXTRACT_RUNNER="$(mktemp)"
+    printf "set -euo pipefail\nbash '%s/extract-whmcs.sh' '%s/extract.env'\n" \
+      "$REMOTE_WORKDIR" "$REMOTE_WORKDIR" > "$EXTRACT_RUNNER"
+
+    run_remote_script "$EXTRACT_RUNNER" "${SCRIPT_DIR}/lib/extract-whmcs.sh" \
+      || { rm -f "$EXTRACT_RUNNER"; die "Could not put the WHMCS files in place."; }
+    rm -f "$EXTRACT_RUNNER"
+    success "WHMCS files in place"
+  fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════

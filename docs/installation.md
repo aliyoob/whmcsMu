@@ -78,13 +78,16 @@ ssh you@server 'sudo chmod 0400 /var/www/whmcs/configuration.php'
 and rename `/var/www/whmcs/admin` to something unguessable, setting
 `$customadminpath` in `configuration.php` to match.
 
-You can also come back later, once you have the key:
+**No archive or licence yet?** Answer `skip` at the archive prompt. The server
+is still prepared completely — only WHMCS itself is left out. Come back with:
 
 ```bash
 ./infrastructure/deploy-all.sh --skip-server
 ```
 
-It detects an existing installation and leaves it alone, so re-running is safe.
+and supply the archive and key then. It puts the files in place and installs,
+in seconds rather than minutes, because everything else is already there. An
+existing installation is detected and left alone, so re-running is always safe.
 
 ### 3. Activate the addon
 

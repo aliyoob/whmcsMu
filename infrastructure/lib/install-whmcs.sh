@@ -40,6 +40,12 @@ step "Checking the installation"
 
 [[ -d "$WEBROOT" ]] || fail "No web root at ${WEBROOT}"
 
+if [[ ! -f "${WEBROOT}/init.php" ]]; then
+  fail "There is no WHMCS in ${WEBROOT}.
+  The archive was never extracted here. Re-run the deployment and give it the
+  path to your whmcs.zip when it asks."
+fi
+
 if [[ ! -f "$INSTALLER_BIN" ]]; then
   fail "This WHMCS release has no bin/installer.php.
   The command-line installer arrived in WHMCS 8.x. Use the web installer at
