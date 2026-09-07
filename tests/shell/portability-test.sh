@@ -67,12 +67,17 @@ infrastructure/lib/install-whmcs.sh infrastructure/lib/extract-whmcs.sh"
 
 for script in $ALL_SCRIPTS; do
     [ -f "$script" ] || continue
-    hits=$(grep -nE '\|[[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "$script" | grep -vE '^[0-9]+:[[:space:]]*#')
+    # Any consumer that can exit before its producer finishes: grep -q,
+    # grep -m, head, `awk ... exit`, `sed ... q`. All of them send SIGPIPE
+    # upstream, and pipefail then reports a *successful* match as a failure.
+    EARLY_EXIT='\|[[:space:]]*(grep[[:space:]]+-[a-zA-Z]*q|grep[^|]*-m[[:space:]]*[0-9]|head\b|awk[^|]*\bexit\b|sed[^|]*[^a-z]q\b)'
+    hits=$(grep -nE "$EARLY_EXIT" "$script" | grep -vE '^[0-9]+:[[:space:]]*#')
     if [ -z "$hits" ]; then
-        report "ok  " "no pipefail/grep -q trap: $script"
+        report "ok  " "no SIGPIPE/pipefail trap: $script"
     else
-        report "FAIL" "unsafe '| grep -q' in $script (use contains()):"
+        report "FAIL" "pipe into an early-exiting consumer in $script:"
         printf '%s\n' "$hits" | sed 's/^/         /'
+        report "    " "use contains(), or capture the output and parse it"
         failures=$((failures + 1))
     fi
 done

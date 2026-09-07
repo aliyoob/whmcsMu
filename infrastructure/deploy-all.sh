@@ -314,7 +314,7 @@ if command -v dig >/dev/null 2>&1 || command -v host >/dev/null 2>&1; then
   if command -v dig >/dev/null 2>&1; then
     RESOLVED="$(dig +short "$WHMCS_DOMAIN" A 2>/dev/null | grep -E '^[0-9.]+$' | tail -1 || true)"
   else
-    RESOLVED="$(host -t A "$WHMCS_DOMAIN" 2>/dev/null | awk '/has address/ {print $NF; exit}' || true)"
+    RESOLVED="$(host -t A "$WHMCS_DOMAIN" 2>/dev/null | awk '/has address/ {a=$NF} END {print a}' || true)"
   fi
 
   if [[ -z "$RESOLVED" ]]; then
@@ -739,7 +739,7 @@ RUNNER
   if [[ "$WHMCS_INSTALLED" == "1" ]]; then
     # The remote script renames the admin directory; recover the new name so
     # the summary can point at the right URL.
-    DISCOVERED="$(remote_value "ls -1d '${WHMCS_WEBROOT}'/admin* 2>/dev/null | head -1 | xargs -r basename")"
+    DISCOVERED="$(remote_value "for d in '${WHMCS_WEBROOT}'/admin*; do [ -d \"\$d\" ] && basename \"\$d\"; done" || true)"
     [[ -n "$DISCOVERED" ]] && WHMCS_ADMIN_PATH="$DISCOVERED"
   fi
 else

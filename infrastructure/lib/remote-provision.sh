@@ -212,7 +212,10 @@ if [[ "$FAMILY" == "debian" ]]; then
   PHP_CLI_INI_DIR="/etc/php/${PHP}/cli/conf.d"
   PHP_FPM_SERVICE="php${PHP}-fpm"
   PHP_FPM_SOCKET="/run/php/php${PHP}-fpm.sock"
-  PHP_EXT_DIR="$(php${PHP} -i 2>/dev/null | awk -F'=> ' '/^extension_dir/ {print $2; exit}')"
+  # Asked directly rather than parsed out of `php -i`: piping that into an awk
+  # with `exit` sends SIGPIPE to php, and pipefail turns it into a failed
+  # assignment that ends the whole run silently.
+  PHP_EXT_DIR="$("php${PHP}" -r 'echo ini_get("extension_dir");' 2>/dev/null || true)"
 else
   dnf install -y -q epel-release >/dev/null 2>&1 || true
   dnf install -y -q \
@@ -242,7 +245,7 @@ else
   PHP_CLI_INI_DIR="/etc/php.d"
   PHP_FPM_SERVICE="php-fpm"
   PHP_FPM_SOCKET="/run/php-fpm/www.sock"
-  PHP_EXT_DIR="$(php -i 2>/dev/null | awk -F'=> ' '/^extension_dir/ {print $2; exit}')"
+  PHP_EXT_DIR="$(php -r 'echo ini_get("extension_dir");' 2>/dev/null || true)"
 fi
 
 note "PHP $(php${PHP} -r 'echo PHP_VERSION;' 2>/dev/null || php -r 'echo PHP_VERSION;')"
