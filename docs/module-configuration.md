@@ -186,6 +186,7 @@ Options:
 
 ```bash
 php cron/worker.php --selftest          # check the configuration, exit non-zero on a problem
+php cron/worker.php --migrate           # create or update this module's tables
 php cron/worker.php --verbose           # one tick, narrated
 php cron/worker.php --job=<uuid>        # advance one job
 php cron/worker.php --loop=300 --verbose  # tick for five minutes; useful while debugging

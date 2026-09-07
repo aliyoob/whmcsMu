@@ -31,6 +31,34 @@ without it the worker cannot find the master key and exits.
 
 ---
 
+## The automated WHMCS installation failed
+
+The script drives WHMCS's own `bin/installer.php`. When it exits non-zero, the
+cause is almost always one of four things.
+
+| Symptom | Cause |
+|---|---|
+| A licence error | The key is wrong, expired, or **bound to another domain or IP**. A WHMCS licence is tied to both; reissue it for the new domain in the WHMCS members area. |
+| A connection error during licensing | The server cannot reach WHMCS's licensing service over HTTPS. Check outbound 443 and DNS. |
+| A database error | The credentials in `configuration.php` do not match the database the script created. |
+| A permission error | `configuration.php` is not writable by the web user at install time. |
+
+Nothing is left half-installed: fix the cause and re-run. The script detects an
+existing installation and refuses to touch it, so a re-run is safe.
+
+```bash
+./infrastructure/deploy-all.sh --skip-server
+```
+
+You can also finish it in a browser at
+`https://your-domain/install/install.php` — the database credentials are in
+`infrastructure/credentials-<domain>.txt`.
+
+If `bin/installer.php` does not exist, the release predates the command-line
+installer; use the web installer.
+
+---
+
 ## `WTP_MASTER_KEY is not set`
 
 The environment file is missing, unreadable by the web user, or has no key.

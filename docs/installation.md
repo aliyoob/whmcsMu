@@ -12,8 +12,11 @@ server you already run. Both end in the same place.
 From your own machine, in a checkout of this repository:
 
 ```bash
-./infrastructure/setup-whmcs.sh
+./infrastructure/deploy-all.sh
 ```
+
+(`setup-whmcs.sh` is the same server-preparation work on its own, for when you
+want that without the rest.)
 
 It asks for the VPS address, SSH credentials, the domain WHMCS will run on, and
 where to put things, then installs and configures:
@@ -41,37 +44,56 @@ Useful flags:
 The script is idempotent. Anything it replaces is copied to
 `/var/backups/wtp-setup-<timestamp>/` first.
 
-### 2. Run the WHMCS installer
+### 2. Install WHMCS
 
-The script deliberately stops here. The web installer needs your licence key and
-sets the first admin password — neither belongs in a shell script or in a
-repository.
+If you gave the script your licence key, this is already done — it drives
+WHMCS's own documented non-interactive installer:
 
-Open `https://your-domain/install/install.php` and use the database credentials
-the script printed.
+```
+php -f bin/installer.php -- -i -n -c   < configuration JSON on stdin
+```
 
-### 3. Harden
+That is the supported command-line path, not a scripted click-through of the
+web wizard, so it keeps working across WHMCS releases. The configuration
+reaches the installer on stdin from a `0600` file, because WHMCS's own
+documentation warns against putting credentials on a command line.
+
+The script then hardens the installation for you:
+
+* removes `install/`
+* renames `admin/` to `admin-<random>` and writes `$customadminpath`
+* sets `configuration.php` to `0400`
+* sets the System URL
+* pre-creates this module's tables, so activation is instant
+
+**Without a licence key** the script stops here and prints what you need.
+Open `https://your-domain/install/install.php` and use the database
+credentials it gave you. Then harden it by hand:
 
 ```bash
 ssh you@server 'sudo rm -rf /var/www/whmcs/install'
-```
-
-Then rename `/var/www/whmcs/admin` to something unguessable and set
-`$customadminpath` in `configuration.php` to match. Once WHMCS has written
-`configuration.php`, set it read-only:
-
-```bash
 ssh you@server 'sudo chmod 0400 /var/www/whmcs/configuration.php'
 ```
 
-### 4. Activate the addon
+and rename `/var/www/whmcs/admin` to something unguessable, setting
+`$customadminpath` in `configuration.php` to match.
+
+You can also come back later, once you have the key:
+
+```bash
+./infrastructure/deploy-all.sh --skip-server
+```
+
+It detects an existing installation and leaves it alone, so re-running is safe.
+
+### 3. Activate the addon
 
 **System Settings → Addon Modules → WordPress Theme Provisioner → Activate.**
 
 Activation creates the `mod_wtp_*` tables. Grant access to the admin roles that
 should see it.
 
-### 5. Verify
+### 4. Verify
 
 ```bash
 ssh you@server \
@@ -216,9 +238,21 @@ advance.
 Overlapping runs are safe — the worker takes a lock and every step is
 idempotent.
 
-### 7. Activate and verify
+### 7. Create this module's tables
 
-As in Path A, steps 4 and 5.
+Either activate the addon in WHMCS, or do it from the command line:
+
+```bash
+sudo -u www-data WTP_ENV_FILE=/etc/whmcs-wtp/wtp.env \
+  php <whmcs>/modules/addons/wpthemeprovisioner/cron/worker.php --migrate
+```
+
+Both run the same migrations, both are idempotent. Doing it up front just makes
+activation instant.
+
+### 8. Activate and verify
+
+As in Path A, steps 3 and 4.
 
 ---
 

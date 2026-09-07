@@ -59,16 +59,19 @@ WHMCS order ──► provisioning job ──► cPanel account ──► databa
 ## Quick start
 
 ```bash
-# 1. Everything: prepares the server, installs WHMCS's dependencies,
-#    deploys this module and verifies the result. Asks for the server
-#    password; takes 3–10 minutes.
+# Everything: prepares the server, installs WHMCS (given a licence key),
+# deploys this module, hardens the installation and verifies it.
+# Asks for the server password; takes 3–10 minutes.
 ./infrastructure/deploy-all.sh
 
-# 2. Finish the WHMCS web installer by hand (licence key, admin account)
-
-# 3. Activate "WordPress Theme Provisioner" in WHMCS, then verify
-ssh you@server 'php /var/www/whmcs/modules/addons/wpthemeprovisioner/cron/worker.php --selftest'
+# Then one click in WHMCS: System Settings → Addon Modules →
+# "WordPress Theme Provisioner" → Activate
 ```
+
+WHMCS itself is installed through its own documented non-interactive installer
+(`bin/installer.php -i -n -c`), not a scripted click-through of the web wizard.
+Without a licence key the script stops at the web installer and prints what you
+need for it.
 
 `deploy-all.sh` is the one-command path. `setup-whmcs.sh` (server only) and
 `deploy.sh` (module only) are the same work split in two, for when you want

@@ -14,6 +14,7 @@
  *   --job=UUID        advance one specific job and exit
  *   --verbose         print what happens
  *   --selftest        check configuration and exit non-zero on a problem
+ *   --migrate         create or update this module's tables and exit
  *
  * The worker is safe to run concurrently: every mutation is guarded by row
  * locks and unique constraints, and every step is idempotent. A slow tick will
@@ -62,6 +63,10 @@ try {
 
 if (!empty($options['selftest'])) {
     exit(wtp_worker_selftest($container));
+}
+
+if (!empty($options['migrate'])) {
+    exit(wtp_worker_migrate($container));
 }
 
 // A single-instance guard: overlapping ticks are safe, but there is no point
@@ -141,6 +146,46 @@ function wtp_worker_options(array $argv): array
         $options[substr($arg, 0, $eq)] = substr($arg, $eq + 1);
     }
     return $options;
+}
+
+/**
+ * Create or update this module's own tables.
+ *
+ * Activating the addon does exactly this, so the two are interchangeable and
+ * both are idempotent — migrations are recorded and never re-applied. Having
+ * it on the command line lets an unattended install prepare the schema before
+ * anyone opens the admin area.
+ */
+function wtp_worker_migrate(\Wtp\Addon\Container $container): int
+{
+    $installer = new \Wtp\Addon\Support\Installer(
+        $container->db(),
+        $container->clock(),
+        WTP_ADDON_DIR . '/migrations'
+    );
+
+    $result = $installer->migrate();
+    $installer->seedDefaults();
+
+    foreach ($result['errors'] as $error) {
+        fwrite(STDERR, '  migration failed: ' . $error . "\n");
+    }
+    if ($result['errors'] !== []) {
+        return 1;
+    }
+
+    fwrite(STDOUT, sprintf(
+        "%d migration(s) applied, %d already present.\n",
+        count($result['applied']),
+        count($result['skipped'])
+    ));
+
+    if (!$installer->isFullyInstalled()) {
+        fwrite(STDERR, "Some tables are still missing after migrating.\n");
+        return 1;
+    }
+
+    return 0;
 }
 
 /** Verify the pieces an operator most often gets wrong. */

@@ -11,9 +11,9 @@
 #  cron; extracts WHMCS; builds and deploys this module; generates the
 #  encryption key; and verifies the result.
 #
-#  The one thing it cannot do is run the WHMCS web installer — that needs your
-#  licence key and sets the admin password. It finishes by printing the URL and
-#  the database credentials for that step.
+#  Given a licence key it also installs WHMCS itself, through WHMCS's own
+#  documented non-interactive installer. Without one it stops at the point
+#  where you would open the web installer, and prints the details for it.
 #
 #  Options
 #      --config FILE     load the answers from a file instead of asking
@@ -21,6 +21,7 @@
 #      --skip-server     the server is already prepared; deploy the module only
 #      --skip-deploy     prepare the server only
 #      --skip-tests      do not run the test suite before deploying
+#      --skip-whmcs      do not run the WHMCS installer, even with a licence key
 #      --dry-run         show what would happen, change nothing
 #
 #  Safe to re-run. Everything it replaces on the server is backed up to
@@ -39,6 +40,7 @@ source "${SCRIPT_DIR}/lib/ssh-auth.sh"
 SKIP_SERVER=0
 SKIP_DEPLOY=0
 SKIP_TESTS=0
+SKIP_WHMCS_INSTALL=0
 DRY_RUN=0
 CONFIG_FILE=""
 
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --skip-server) SKIP_SERVER=1; shift ;;
     --skip-deploy) SKIP_DEPLOY=1; shift ;;
     --skip-tests)  SKIP_TESTS=1; shift ;;
+    --skip-whmcs)  SKIP_WHMCS_INSTALL=1; shift ;;
     --dry-run)     DRY_RUN=1; shift ;;
     --help|-h)     awk 'NR>1 && /^#/ { sub(/^#[ ]?/, ""); print; next } NR>1 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)             die "Unknown option: $1 (try --help)" ;;
@@ -141,6 +144,28 @@ remote_value() { wtp_ssh_value "${SSH_OPTS[@]}" "$TARGET" "$@"; }
 remote_tty()   { wtp_ssh -t "${SSH_OPTS[@]}" "$TARGET" "$@"; }
 push()         { wtp_scp "${SCP_OPTS[@]}" "$1" "${TARGET}:$2" >/dev/null; }
 
+# Run a locally-written script on the server.
+#
+# Not a heredoc piped into ssh: under the expect strategy that heredoc becomes
+# *expect's* stdin and the remote shell receives nothing at all. Uploading the
+# script also keeps every credential out of the server's process list, which a
+# command line would not.
+#
+#   run_remote_script <local-file> [extra files to upload alongside it...]
+run_remote_script() {
+  local script="$1"; shift
+  local name="wtp-$(random_token 8).sh"
+
+  push "$script" "${REMOTE_WORKDIR}/${name}"
+
+  local extra
+  for extra in "$@"; do
+    push "$extra" "${REMOTE_WORKDIR}/$(basename "$extra")"
+  done
+
+  remote_tty "chmod 700 '${REMOTE_WORKDIR}/${name}' && ${SUDO} bash '${REMOTE_WORKDIR}/${name}';               status=\$?; rm -f '${REMOTE_WORKDIR}/${name}'; exit \$status"
+}
+
 info "Connecting…"
 if ! remote_out 'echo wtp-connection-ok' | grep -q 'wtp-connection-ok'; then
   die "Could not sign in to ${TARGET}:${VPS_SSH_PORT}.
@@ -228,6 +253,52 @@ if [[ "$WHMCS_ARCHIVE" != "skip" && "$WHMCS_ARCHIVE" != http* ]]; then
   [[ -f "$WHMCS_ARCHIVE" ]] || die "No archive at ${WHMCS_ARCHIVE}"
 fi
 
+# ---------------------------------------------------------------------------
+
+heading "WHMCS installation"
+
+if [[ "$SKIP_WHMCS_INSTALL" == "1" || "$WHMCS_ARCHIVE" == "skip" ]]; then
+  WHMCS_AUTO_INSTALL="n"
+  [[ "$WHMCS_ARCHIVE" == "skip" ]] && note_skip="no WHMCS archive was supplied" || note_skip="--skip-whmcs"
+  log "Skipping the automated installation (${note_skip})."
+else
+  echo "  WHMCS ships a non-interactive installer. If you have your licence key"
+  echo "  I can run it and hand you a finished, hardened installation."
+  echo "  Without a key, you finish it in a browser instead — that is fine too."
+  echo
+  ask_yes_no WHMCS_AUTO_INSTALL "Install WHMCS automatically?" "y"
+fi
+
+if [[ "$WHMCS_AUTO_INSTALL" == "y" ]]; then
+  ask_secret WHMCS_LICENSE "WHMCS licence key"
+  if [[ -z "$WHMCS_LICENSE" ]]; then
+    warn "No licence key — falling back to the web installer."
+    WHMCS_AUTO_INSTALL="n"
+  fi
+fi
+
+if [[ "$WHMCS_AUTO_INSTALL" == "y" ]]; then
+  ask WHMCS_ADMIN_USER "WHMCS administrator username" "admin"
+
+  if [[ -z "${WHMCS_ADMIN_PASSWORD:-}" ]]; then
+    if [[ "${WTP_NONINTERACTIVE:-0}" == "1" ]]; then
+      WHMCS_ADMIN_PASSWORD="$(random_token 20)"
+    else
+      ask_secret WHMCS_ADMIN_PASSWORD "Administrator password (blank to generate one)"
+    fi
+  fi
+  if [[ -z "$WHMCS_ADMIN_PASSWORD" ]]; then
+    WHMCS_ADMIN_PASSWORD="$(random_token 20)"
+    log "Generated an administrator password — shown at the end."
+  elif [[ "${#WHMCS_ADMIN_PASSWORD}" -lt 8 ]]; then
+    die "WHMCS requires an administrator password of at least 8 characters."
+  fi
+
+  ask_yes_no WHMCS_RENAME_ADMIN "Rename the admin directory to something unguessable?" "y"
+fi
+
+# ---------------------------------------------------------------------------
+
 heading "Theme provisioner"
 
 ask WTP_STORAGE_PATH "Where to keep theme and demo packages" "/var/lib/whmcs-wtp/packages"
@@ -257,12 +328,16 @@ cat <<PLAN
   TLS            ${TLS_LABEL}
   Firewall       $([[ "$WHMCS_CONFIGURE_FIREWALL" == "y" ]] && echo "22, 80, 443" || echo "left alone")
   WHMCS archive  ${ARCHIVE_LABEL}
+  Installation   $([[ "$WHMCS_AUTO_INSTALL" == "y" ]] \
+                    && echo "automatic (licence supplied), admin user '${WHMCS_ADMIN_USER}'" \
+                    || echo "manual — finish it in a browser")
 
   Packages       ${WTP_STORAGE_PATH}
   Encryption key ${WTP_ENV_PATH}
 
-  Steps          $([[ "$SKIP_SERVER" == "1" ]] && echo "skip server prep · " || echo "prepare server · ")\
-$([[ "$SKIP_DEPLOY" == "1" ]] && echo "skip deploy" || echo "deploy provisioner · verify")
+  Steps          $([[ "$SKIP_SERVER" == "1" ]] && echo "skip server prep" || echo "prepare server")\
+ · $([[ "$SKIP_DEPLOY" == "1" ]] && echo "skip deploy" || echo "deploy provisioner")\
+$([[ "$WHMCS_AUTO_INSTALL" == "y" ]] && echo " · install WHMCS" || true) · verify
 PLAN
 
 if [[ "$DRY_RUN" == "1" ]]; then
@@ -292,7 +367,7 @@ trap cleanup_all EXIT
 # ═══════════════════════════════════════════════════════════════════════════
 
 if [[ "$SKIP_SERVER" == "0" ]]; then
-  heading "1/4  Preparing the server"
+  heading "1/5  Preparing the server"
 
   info "Uploading the provisioning script…"
   push "${SCRIPT_DIR}/lib/remote-provision.sh" "${REMOTE_WORKDIR}/remote-provision.sh"
@@ -341,7 +416,7 @@ ANSWERS
 
   success "Server prepared"
 else
-  heading "1/4  Preparing the server — skipped"
+  heading "1/5  Preparing the server — skipped"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -349,7 +424,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 
 if [[ "$SKIP_DEPLOY" == "0" ]]; then
-  heading "2/4  Building the provisioner"
+  heading "2/5  Building the provisioner"
 
   if [[ "$SKIP_TESTS" == "0" ]]; then
     info "Running the test suite…"
@@ -376,7 +451,7 @@ if [[ "$SKIP_DEPLOY" == "0" ]]; then
   # 5. Deploy
   # ═════════════════════════════════════════════════════════════════════════
 
-  heading "3/4  Deploying"
+  heading "3/5  Deploying"
 
   info "Packing…"
   BUNDLE="$(mktemp -d)"
@@ -390,11 +465,13 @@ if [[ "$SKIP_DEPLOY" == "0" ]]; then
   rm -rf "$BUNDLE"
 
   info "Installing…"
-  remote "${SUDO} bash -s" <<REMOTE_DEPLOY || die "Deployment failed."
+  DEPLOY_SCRIPT="$(mktemp)"
+  cat > "$DEPLOY_SCRIPT" <<REMOTE_DEPLOY
 set -euo pipefail
 
 WEBROOT='${WHMCS_WEBROOT}'
 STORAGE='${WTP_STORAGE_PATH}'
+WORKDIR='${REMOTE_WORKDIR}'
 
 [ -d "\$WEBROOT" ] || { echo "No web root at \$WEBROOT" >&2; exit 1; }
 
@@ -404,12 +481,14 @@ if [ -f "\$WEBROOT/init.php" ]; then
 else
   WEB_USER=\$(stat -c '%U' "\$WEBROOT")
 fi
-[ -n "\$WEB_USER" ] && [ "\$WEB_USER" != "root" ] || WEB_USER=\$(id -u www-data >/dev/null 2>&1 && echo www-data || echo nginx)
+if [ -z "\$WEB_USER" ] || [ "\$WEB_USER" = "root" ]; then
+  WEB_USER=\$(id -u www-data >/dev/null 2>&1 && echo www-data || echo nginx)
+fi
 
-tar -xzf '${REMOTE_WORKDIR}/wtp-whmcs.tar.gz' -C "\$WEBROOT"
+tar -xzf "\$WORKDIR/wtp-whmcs.tar.gz" -C "\$WEBROOT"
 
 install -D -m 0640 -o "\$WEB_USER" -g "\$WEB_USER" \
-  '${REMOTE_WORKDIR}/agent.zip' "\$STORAGE/agent/whmcs-theme-provisioner.zip"
+  "\$WORKDIR/agent.zip" "\$STORAGE/agent/whmcs-theme-provisioner.zip"
 
 for path in \
   "\$WEBROOT/modules/addons/wpthemeprovisioner" \
@@ -425,17 +504,90 @@ done
 echo "installed as \$WEB_USER"
 REMOTE_DEPLOY
 
+  run_remote_script "$DEPLOY_SCRIPT" || { rm -f "$DEPLOY_SCRIPT"; die "Deployment failed."; }
+  rm -f "$DEPLOY_SCRIPT"
+
   success "Deployed"
 else
-  heading "2/4  Building — skipped"
-  heading "3/4  Deploying — skipped"
+  heading "2/5  Building — skipped"
+  heading "3/5  Deploying — skipped"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. Verify
+# 6. Install WHMCS
 # ═══════════════════════════════════════════════════════════════════════════
 
-heading "4/4  Verifying"
+WHMCS_ADMIN_PATH="admin"
+WHMCS_INSTALLED=0
+
+if [[ "$WHMCS_AUTO_INSTALL" == "y" ]]; then
+  heading "4/5  Installing WHMCS"
+
+  # Everything sensitive travels in a 0600 file that the remote script sources
+  # and then deletes — never on a command line, which WHMCS's own
+  # documentation explicitly warns against.
+  INSTALL_ANSWERS="$(mktemp)"
+  chmod 600 "$INSTALL_ANSWERS"
+  cat > "$INSTALL_ANSWERS" <<ANSWERS
+WHMCS_WEBROOT='${WHMCS_WEBROOT}'
+WHMCS_DOMAIN='${WHMCS_DOMAIN}'
+WHMCS_PHP='${WHMCS_PHP}'
+WHMCS_LICENSE='${WHMCS_LICENSE}'
+WHMCS_ADMIN_USER='${WHMCS_ADMIN_USER}'
+WHMCS_ADMIN_PASSWORD='${WHMCS_ADMIN_PASSWORD}'
+WHMCS_DB_HOST='localhost'
+WHMCS_DB_NAME='${WHMCS_DB_NAME}'
+WHMCS_DB_USER='${WHMCS_DB_USER}'
+WHMCS_DB_PASSWORD='${WHMCS_DB_PASSWORD}'
+WHMCS_SYSTEM_URL='https://${WHMCS_DOMAIN}/'
+WHMCS_RENAME_ADMIN='${WHMCS_RENAME_ADMIN}'
+WTP_ENV_PATH='${WTP_ENV_PATH}'
+WTP_CREATE_SCHEMA='y'
+ANSWERS
+
+  ANSWERS_REMOTE_NAME="whmcs-install-$(random_token 8).env"
+  push "$INSTALL_ANSWERS" "${REMOTE_WORKDIR}/${ANSWERS_REMOTE_NAME}"
+  shred -u "$INSTALL_ANSWERS" 2>/dev/null || rm -f "$INSTALL_ANSWERS"
+  remote "chmod 600 '${REMOTE_WORKDIR}/${ANSWERS_REMOTE_NAME}'" >/dev/null
+
+  INSTALL_RUNNER="$(mktemp)"
+  cat > "$INSTALL_RUNNER" <<RUNNER
+set -euo pipefail
+bash '${REMOTE_WORKDIR}/install-whmcs.sh' '${REMOTE_WORKDIR}/${ANSWERS_REMOTE_NAME}'
+status=\$?
+shred -u '${REMOTE_WORKDIR}/${ANSWERS_REMOTE_NAME}' 2>/dev/null || rm -f '${REMOTE_WORKDIR}/${ANSWERS_REMOTE_NAME}'
+exit \$status
+RUNNER
+
+  if run_remote_script "$INSTALL_RUNNER" "${SCRIPT_DIR}/lib/install-whmcs.sh"; then
+    WHMCS_INSTALLED=1
+    success "WHMCS installed"
+  else
+    rm -f "$INSTALL_RUNNER"
+    remote "shred -u '${REMOTE_WORKDIR}/${ANSWERS_REMOTE_NAME}' 2>/dev/null || rm -f '${REMOTE_WORKDIR}/${ANSWERS_REMOTE_NAME}'" >/dev/null 2>&1 || true
+    error "The WHMCS installation did not complete — see the output above."
+    warn "Everything else is in place. You can finish it in a browser at"
+    warn "  https://${WHMCS_DOMAIN}/install/install.php"
+    warn "or re-run this script once the cause is fixed."
+    WHMCS_AUTO_INSTALL="failed"
+  fi
+  rm -f "$INSTALL_RUNNER"
+
+  if [[ "$WHMCS_INSTALLED" == "1" ]]; then
+    # The remote script renames the admin directory; recover the new name so
+    # the summary can point at the right URL.
+    DISCOVERED="$(remote_value "ls -1d '${WHMCS_WEBROOT}'/admin* 2>/dev/null | head -1 | xargs -r basename")"
+    [[ -n "$DISCOVERED" ]] && WHMCS_ADMIN_PATH="$DISCOVERED"
+  fi
+else
+  heading "4/5  Installing WHMCS — skipped"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7. Verify
+# ═══════════════════════════════════════════════════════════════════════════
+
+heading "5/5  Verifying"
 
 WEB_USER="$(remote_value "stat -c '%U' '${WHMCS_WEBROOT}' 2>/dev/null || echo www-data")"
 SELFTEST_OUTPUT="$(remote "${SUDO} -u '${WEB_USER}' env WTP_ENV_FILE='${WTP_ENV_PATH}' \
@@ -473,18 +625,35 @@ ELAPSED=$(( $(date +%s) - STARTED_AT ))
 CREDENTIALS_FILE="${REPO_ROOT}/infrastructure/credentials-${WHMCS_DOMAIN}.txt"
 
 umask 077
-cat > "$CREDENTIALS_FILE" <<CREDS
+{
+  cat <<CREDS
 WHMCS deployment — ${WHMCS_DOMAIN}
 Generated $(date -u '+%Y-%m-%d %H:%M:%S UTC') by deploy-all.sh
 
   Server              ${TARGET}:${VPS_SSH_PORT}
   Web root            ${WHMCS_WEBROOT}
-  Installer URL       https://${WHMCS_DOMAIN}/install/install.php
 
   Database host       localhost
   Database name       ${WHMCS_DB_NAME}
   Database username   ${WHMCS_DB_USER}
   Database password   ${WHMCS_DB_PASSWORD}
+CREDS
+
+  if [[ "$WHMCS_INSTALLED" == "1" ]]; then
+    cat <<CREDS
+
+  Admin URL           https://${WHMCS_DOMAIN}/${WHMCS_ADMIN_PATH}/
+  Admin username      ${WHMCS_ADMIN_USER}
+  Admin password      ${WHMCS_ADMIN_PASSWORD}
+CREDS
+  else
+    cat <<CREDS
+
+  Installer URL       https://${WHMCS_DOMAIN}/install/install.php
+CREDS
+  fi
+
+  cat <<CREDS
 
   Encryption key      ${WTP_ENV_PATH} on the server (mode 0640)
                       Back this file up. Losing it makes every stored
@@ -495,12 +664,63 @@ Generated $(date -u '+%Y-%m-%d %H:%M:%S UTC') by deploy-all.sh
 This file contains secrets. It is gitignored. Move it somewhere safe and
 delete it from here.
 CREDS
+} > "$CREDENTIALS_FILE"
 chmod 600 "$CREDENTIALS_FILE"
 
 heading "Done in $((ELAPSED / 60))m $((ELAPSED % 60))s"
 
+if [[ "$WHMCS_INSTALLED" == "1" ]]; then
+
 cat <<NEXT
-Four steps left. They need a human, so the script stops here.
+WHMCS is installed, hardened and ready.
+
+  ${C_BOLD}Sign in${C_RESET}
+
+     ${C_BLUE}https://${WHMCS_DOMAIN}/${WHMCS_ADMIN_PATH}/${C_RESET}
+
+       Username  ${C_BOLD}${WHMCS_ADMIN_USER}${C_RESET}
+       Password  ${C_BOLD}${WHMCS_ADMIN_PASSWORD}${C_RESET}
+
+     Already done for you: the install directory removed, configuration.php
+     set to 0400, the admin directory renamed, and the System URL configured.
+
+  ${C_BOLD}One click left${C_RESET}
+
+     System Settings → Addon Modules → "WordPress Theme Provisioner"
+       → Activate → tick the admin roles that should see it
+
+     WHMCS has no supported way to activate an addon from outside its admin
+     area, so this one stays manual. Its tables already exist, so activation
+     is instant.
+
+  ${C_BOLD}Then${C_RESET}
+
+     1. Add your cPanel server
+        System Settings → Servers → Add New Server
+        Use a ${C_BOLD}WHM API token${C_RESET}, not the root password, and fill in the
+        IP address — it is what lets provisioning work before DNS propagates.
+
+     2. Add a theme and a demo
+        Addons → WordPress Theme Provisioner → Themes & demos
+        See docs/theme-demo.md — the theme slug must match the directory
+        name inside the zip.
+
+     3. Point a hosting product at "WordPress Hosting (Theme Provisioner)"
+        and enable selection for it in the addon's Products tab.
+
+     4. Place a test order and watch it in Addons → … → Jobs.
+
+  ${C_BOLD}Verify any time${C_RESET}
+
+     ssh ${TARGET} \\
+       "${SUDO} -u ${WEB_USER} php ${WHMCS_WEBROOT}/modules/addons/wpthemeprovisioner/cron/worker.php --selftest"
+
+NEXT
+
+else
+
+cat <<NEXT
+The server is ready. WHMCS itself still needs installing.
 
   ${C_BOLD}1  Run the WHMCS installer${C_RESET}
 
@@ -511,7 +731,9 @@ Four steps left. They need a human, so the script stops here.
        Database user      ${WHMCS_DB_USER}
        Database password  ${C_BOLD}${WHMCS_DB_PASSWORD}${C_RESET}
 
-     It asks for your licence key and creates the first admin account.
+     Or re-run this script with your licence key to have it done for you:
+
+       ./infrastructure/deploy-all.sh --skip-server
 
   ${C_BOLD}2  Lock it down${C_RESET}
 
@@ -526,14 +748,10 @@ Four steps left. They need a human, so the script stops here.
      WHMCS admin → System Settings → Addon Modules
        → "WordPress Theme Provisioner" → Activate → set access control
 
-     This creates its database tables.
-
   ${C_BOLD}4  Check it${C_RESET}
 
      ssh ${TARGET} \\
        "${SUDO} -u ${WEB_USER} php ${WHMCS_WEBROOT}/modules/addons/wpthemeprovisioner/cron/worker.php --selftest"
-
-     Every line should read OK.
 
 ${C_BOLD}Then${C_RESET}
   · Add a cPanel server:  System Settings → Servers  (use a WHM API token)
@@ -541,8 +759,13 @@ ${C_BOLD}Then${C_RESET}
   · Point a hosting product at "WordPress Hosting (Theme Provisioner)"
   · Enable selection for it in the addon's Products tab
 
+NEXT
+
+fi
+
+cat <<TAIL
 ${C_YELLOW}Credentials written to${C_RESET}
   ${CREDENTIALS_FILE}
   Mode 0600, gitignored. Move it somewhere safe and delete it from the repo.
 
-NEXT
+TAIL

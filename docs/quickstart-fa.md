@@ -38,7 +38,9 @@ sudo dnf install expect        # AlmaLinux / Rocky
 
 * فایل `whmcs.zip` از ناحیهٔ کاربری WHMCS (نرم‌افزار لایسنس‌دار است و
   نمی‌شود خودکار دانلود کرد)
-* لایسنس WHMCS
+* **کلید لایسنس WHMCS** — اگر بدهید، نصب WHMCS هم خودکار انجام می‌شود.
+  اگر نداشته باشید، اسکریپت تا مرحلهٔ نصب وب پیش می‌رود و بقیه را خودتان
+  در مرورگر تمام می‌کنید.
 * یک دامنه که به آی‌پی سرور اشاره کند (مثلاً `billing.example.com`)
 * یک سرور cPanel/WHM برای ساخت هاست مشتری‌ها — می‌تواند همین سرور نباشد
 
@@ -78,6 +80,13 @@ WHMCS
   Configure the firewall (allow 22, 80, 443)? [Y/n]: y
   Path to whmcs.zip on this machine: ~/Downloads/whmcs.zip
 
+WHMCS installation
+  Install WHMCS automatically? [Y/n]: y
+  WHMCS licence key: ••••••••••••••••
+  WHMCS administrator username [admin]:
+  Administrator password (blank to generate one): ••••••••
+  Rename the admin directory to something unguessable? [Y/n]: y
+
 Theme provisioner
   Where to keep theme and demo packages [/var/lib/whmcs-wtp/packages]:
   Where to keep the encryption key [/etc/whmcs-wtp/wtp.env]:
@@ -102,7 +111,11 @@ Theme provisioner
 10. **ساخت کلید رمزنگاری** در `/etc/whmcs-wtp/wtp.env` با دسترسی `0640`
 11. **نصب cron** — هم کران خود WHMCS، هم کارگر صف این ماژول
 12. **بیلد و دیپلوی ماژول** و بستهٔ ایجنت
-13. **اجرای self-test**
+13. **نصب خود WHMCS** (اگر لایسنس داده باشید) — با نصب‌کنندهٔ رسمی خط فرمان
+14. **امن‌سازی** — حذف `install/`، تغییر نام پوشهٔ `admin`، `chmod 0400` روی
+    `configuration.php`، تنظیم System URL
+15. **ساخت جدول‌های ماژول** تا فعال‌سازی افزونه فوری باشد
+16. **اجرای self-test**
 
 هر فایلی که جایگزین شود، اول در `/var/backups/wtp-setup-<تاریخ>/` کپی می‌شود.
 اسکریپت را می‌توانید دوباره اجرا کنید؛ چیزی خراب نمی‌شود.
@@ -113,6 +126,7 @@ Theme provisioner
 ./infrastructure/deploy-all.sh --dry-run       # فقط نشان بده چه می‌کنی
 ./infrastructure/deploy-all.sh --skip-server   # سرور آماده است، فقط ماژول را بفرست
 ./infrastructure/deploy-all.sh --skip-deploy   # فقط سرور را آماده کن
+./infrastructure/deploy-all.sh --skip-whmcs    # WHMCS را نصب نکن، حتی با لایسنس
 ./infrastructure/deploy-all.sh --config infrastructure/answers.env
 ```
 
@@ -128,9 +142,73 @@ $EDITOR infrastructure/answers.env
 
 ## گام ۲ — نصب WHMCS
 
-اسکریپت اینجا عمداً متوقف می‌شود: نصب وب WHMCS به لایسنس شما نیاز دارد و
-پسورد ادمین را می‌سازد؛ هیچ‌کدام جای‌شان در یک اسکریپت یا در این ریپازیتوری
-نیست.
+### حالت خودکار (اگر لایسنس داده باشید)
+
+اسکریپت خودش این کار را کرده است. از مسیر رسمی خط فرمان WHMCS استفاده می‌کند:
+
+```bash
+php -f bin/installer.php -- -i -n -c   # پیکربندی از stdin
+```
+
+| فلگ | معنی |
+|---|---|
+| `-i` | نصب (به‌جای ارتقا که پیش‌فرض است) |
+| `-n` | حالت غیرتعاملی |
+| `-c` | پیکربندی را به‌صورت JSON از stdin بخوان |
+
+ساختار JSON دقیقاً همان چیزی است که مستندات WHMCS می‌گوید:
+
+```json
+{
+  "admin": { "username": "admin", "password": "…" },
+  "configuration": {
+    "license": "…",
+    "db_host": "localhost",
+    "db_username": "whmcs",
+    "db_password": "…",
+    "db_name": "whmcs",
+    "cc_encryption_hash": "۶۴ کاراکتر",
+    "mysql_charset": "utf8"
+  }
+}
+```
+
+این «شبیه‌سازی کلیک روی ویزارد وب» نیست؛ مسیر پشتیبانی‌شدهٔ خود WHMCS است،
+پس با نسخه‌های بعدی هم کار می‌کند.
+
+**چند نکتهٔ امنیتی در پیاده‌سازی:**
+
+* مستندات WHMCS صراحتاً هشدار می‌دهد اطلاعات حساس را روی خط فرمان نگذارید.
+  به همین دلیل JSON در یک فایل با دسترسی `0600` نوشته و از `stdin` به
+  نصب‌کننده داده می‌شود — هیچ‌چیز در `ps` سرور دیده نمی‌شود.
+* JSON با `json_encode` خود PHP ساخته می‌شود، پس پسوردی که کوتیشن، بک‌اسلش
+  یا حرف فارسی دارد سالم می‌ماند.
+* خروجی نصب‌کننده قبل از نمایش، به‌صورت رشته‌ای (نه regex) از پسورد، لایسنس و
+  هش رمزنگاری پاک می‌شود.
+* `cc_encryption_hash` دقیقاً ۶۴ کاراکتر تولید می‌شود، همان‌طور که WHMCS
+  می‌خواهد.
+
+بعد از نصب، اسکریپت این کارها را هم انجام می‌دهد:
+
+| کار | چرا |
+|---|---|
+| حذف پوشهٔ `install/` | تا کسی نتواند دوباره نصب را اجرا کند |
+| تغییر نام `admin/` به `admin-<تصادفی>` و نوشتن `$customadminpath` | کاهش حملات خودکار روی مسیر پیش‌فرض |
+| `chmod 0400` روی `configuration.php` | خواستهٔ خود WHMCS بعد از نصب |
+| تنظیم System URL | تا ایجنت وردپرس بداند به کجا وصل شود |
+| ساخت جدول‌های `mod_wtp_*` | تا فعال‌سازی افزونه فوری باشد |
+
+در پایان، نام کاربری و پسورد ادمین و آدرس ورود چاپ می‌شود و در فایل
+`infrastructure/credentials-<domain>.txt` هم ذخیره می‌شود.
+
+> اگر نصب شکست خورد، اسکریپت علت‌های محتمل را می‌گوید. شایع‌ترین‌ها:
+> لایسنس اشتباه یا منقضی، لایسنسی که به دامنه یا آی‌پی دیگری بسته شده
+> (باید در ناحیهٔ کاربری WHMCS برای دامنهٔ جدید reissue شود)، یا نرسیدن
+> سرور به سرویس لایسنس WHMCS.
+>
+> چیزی نیمه‌کاره نمی‌ماند: مشکل را حل کنید و دوباره اجرا کنید.
+
+### حالت دستی (اگر لایسنس ندادید)
 
 آدرس زیر را باز کنید:
 
@@ -138,8 +216,8 @@ $EDITOR infrastructure/answers.env
 https://billing.example.com/install/install.php
 ```
 
-اطلاعات دیتابیس را اسکریپت در انتها چاپ کرده و در فایل
-`infrastructure/credentials-<domain>.txt` هم نوشته است:
+اطلاعات دیتابیس در خروجی اسکریپت و در فایل
+`infrastructure/credentials-<domain>.txt` هست:
 
 | فیلد | مقدار |
 |---|---|
@@ -148,35 +226,60 @@ https://billing.example.com/install/install.php
 | Database Username | `whmcs` |
 | Database Password | (تولیدشده) |
 
-> فایل credentials حاوی رمز است، در `.gitignore` قرار دارد، و بعد از
-> ذخیره‌کردن در جای امن باید حذفش کنید.
-
----
-
-## گام ۳ — امن‌سازی
+بعد امن‌سازی را دستی انجام دهید:
 
 ```bash
 ssh root@SERVER 'rm -rf /var/www/whmcs/install'
 ssh root@SERVER 'chmod 0400 /var/www/whmcs/configuration.php'
 ```
 
-سپس پوشهٔ `admin` را به یک نام غیرقابل‌حدس تغییر دهید و در
-`configuration.php` این خط را اضافه کنید:
+و پوشهٔ `admin` را به نامی غیرقابل‌حدس تغییر دهید و در `configuration.php`
+این خط را اضافه کنید:
 
 ```php
 $customadminpath = 'نام-جدید-پوشه';
 ```
 
+### بعداً لایسنس گرفتید؟
+
+کافی است دوباره اجرا کنید:
+
+```bash
+./infrastructure/deploy-all.sh --skip-server
+```
+
+اگر WHMCS از قبل نصب باشد، اسکریپت تشخیص می‌دهد و دست نمی‌زند.
+
 ---
 
-## گام ۴ — فعال‌سازی ماژول
+## گام ۳ — نکتهٔ لایسنس
+
+لایسنس WHMCS به **دامنه و آی‌پی** گره می‌خورد. اگر لایسنس را قبلاً روی سرور
+دیگری استفاده کرده‌اید، قبل از نصب در ناحیهٔ کاربری WHMCS آن را برای دامنهٔ
+جدید reissue کنید، وگرنه نصب با خطای لایسنس شکست می‌خورد.
+
+---
+
+## گام ۴ — فعال‌سازی ماژول (تنها کلیک باقی‌مانده)
 
 در پیشخوان WHMCS:
 
 **System Settings → Addon Modules → WordPress Theme Provisioner → Activate**
 
-با فعال‌سازی، جدول‌های `mod_wtp_*` ساخته می‌شوند. در همان صفحه دسترسی نقش‌های
-ادمین را هم مشخص کنید.
+سپس در همان صفحه دسترسی نقش‌های ادمین را مشخص کنید.
+
+> WHMCS هیچ راه پشتیبانی‌شده‌ای برای فعال‌کردن یک افزونه از بیرون پیشخوان
+> ندارد، پس این یک کلیک دستی می‌ماند. جدول‌ها از قبل ساخته شده‌اند، بنابراین
+> فعال‌سازی آنی است.
+
+اگر ترجیح می‌دهید جدول‌ها را دستی بسازید یا به‌روزرسانی کنید:
+
+```bash
+ssh root@SERVER 'sudo -u www-data WTP_ENV_FILE=/etc/whmcs-wtp/wtp.env \
+  php /var/www/whmcs/modules/addons/wpthemeprovisioner/cron/worker.php --migrate'
+```
+
+هر دو مسیر یک کار می‌کنند و هر دو idempotent هستند.
 
 بعد بررسی کنید:
 
