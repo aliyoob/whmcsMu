@@ -80,9 +80,28 @@ ask_yes_no() {
 
   read -r -p "  ${__prompt} ${__hint}: " __answer
   __answer="${__answer:-$__default}"
-  case "${__answer,,}" in
-    y|yes) printf -v "$__var" '%s' "y" ;;
-    *)     printf -v "$__var" '%s' "n" ;;
+
+  if is_yes "$__answer"; then
+    printf -v "$__var" '%s' "y"
+  else
+    printf -v "$__var" '%s' "n"
+  fi
+}
+
+# Lowercase a string.
+#
+# Not "${var,,}": macOS still ships bash 3.2 as /bin/bash, where that is a
+# syntax error rather than a graceful failure. Everything in the scripts that
+# run on *your* machine stays bash 3.2 compatible for the same reason.
+lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# True for y / yes, in any case.
+is_yes() {
+  case "$(lower "${1:-}")" in
+    y|yes) return 0 ;;
+    *)     return 1 ;;
   esac
 }
 

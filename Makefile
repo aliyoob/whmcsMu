@@ -22,10 +22,11 @@ e2e: ## Run the end-to-end suite only
 	@$(PHP) bin/run-tests.php e2e
 
 .PHONY: lint
-lint: ## Syntax-check every PHP file
+lint: ## Syntax-check PHP, and check the shell scripts run on bash 3.2
 	@find shared whmcs wordpress bootstrap bin tests -name '*.php' -print0 \
 		| xargs -0 -n1 $(PHP) -l > /dev/null && echo "PHP OK"
 	@find infrastructure -name '*.sh' -exec bash -n {} \; && echo "shell OK"
+	@/bin/bash tests/shell/portability-test.sh > /dev/null && echo "bash 3.2 OK"
 
 .PHONY: build
 build: ## Assemble dist/

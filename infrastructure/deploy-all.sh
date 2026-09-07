@@ -349,7 +349,7 @@ fi
 if [[ "${WTP_NONINTERACTIVE:-0}" != "1" ]]; then
   echo
   read -r -p "  Start? [y/N]: " CONFIRM
-  [[ "${CONFIRM,,}" == "y" || "${CONFIRM,,}" == "yes" ]] || die "Cancelled."
+  is_yes "$CONFIRM" || die "Cancelled."
 fi
 
 STARTED_AT="$(date +%s)"
