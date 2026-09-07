@@ -115,8 +115,17 @@ if [[ "$FAMILY" == "debian" ]]; then
     ca-certificates curl wget gnupg lsb-release apt-transport-https \
     software-properties-common unzip tar cron rsync >/dev/null
 
+  # No pipe here on purpose. `apt-cache policy | grep -q` reports failure for
+  # every package on this planet: apt-cache prints a version table after the
+  # candidate line, grep -q exits at the candidate, apt-cache takes SIGPIPE,
+  # and `set -o pipefail` turns a successful match into rc=141.
   php_available() {
-    apt-cache policy "php$1-fpm" 2>/dev/null | grep -q 'Candidate: [0-9]'
+    local policy
+    policy="$(apt-cache policy "php$1-fpm" 2>/dev/null || true)"
+    case "$policy" in
+      *"Candidate: "[0-9]*) return 0 ;;
+      *)                    return 1 ;;
+    esac
   }
 
   # A specific PHP version usually means an external repository — Ondřej Surý's
@@ -244,7 +253,16 @@ note "PHP $(php${PHP} -r 'echo PHP_VERSION;' 2>/dev/null || php -r 'echo PHP_VER
 
 step "Installing the ionCube Loader"
 
-if php${PHP} -m 2>/dev/null | grep -qi ioncube || php -m 2>/dev/null | grep -qi ioncube; then
+php_has_ioncube() {
+  local modules
+  modules="$( { "php${PHP}" -m 2>/dev/null || php -m 2>/dev/null || true; } | tr 'A-Z' 'a-z')"
+  case "$modules" in
+    *ioncube*) return 0 ;;
+    *)         return 1 ;;
+  esac
+}
+
+if php_has_ioncube; then
   note "Already loaded"
 else
   ARCH="$(uname -m)"
@@ -684,7 +702,11 @@ note "Cron installed at ${CRON_FILE}"
 step "Server preparation complete"
 
 note "PHP            $("$PHP_BIN" -r 'echo PHP_VERSION;')"
-note "ionCube        $("$PHP_BIN" -m 2>/dev/null | grep -qi ioncube && echo loaded || echo 'NOT LOADED — WHMCS will not start')"
+IONCUBE_STATE="$( { "$PHP_BIN" -m 2>/dev/null || true; } | tr 'A-Z' 'a-z')"
+case "$IONCUBE_STATE" in
+  *ioncube*) note "ionCube        loaded" ;;
+  *)         warn "ionCube        NOT LOADED — WHMCS will not start" ;;
+esac
 note "MariaDB        $(mysql --version | awk '{print $5}' | tr -d ,)"
 note "nginx          $(nginx -v 2>&1 | awk -F/ '{print $2}')"
 note "Web root       ${WHMCS_WEBROOT}"

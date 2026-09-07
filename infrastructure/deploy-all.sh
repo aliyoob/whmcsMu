@@ -236,7 +236,8 @@ run_remote_script() {
 }
 
 info "Connecting…"
-if ! remote_out 'echo wtp-connection-ok' | grep -q 'wtp-connection-ok'; then
+CONNECT_PROBE="$(remote_out 'echo wtp-connection-ok' || true)"
+if ! contains "$CONNECT_PROBE" 'wtp-connection-ok'; then
   die "Could not sign in to ${TARGET}:${VPS_SSH_PORT}.
   Check the address, the port, the username and the password.
   If the server is brand new, make sure PasswordAuthentication is enabled in
@@ -251,7 +252,7 @@ info "${REMOTE_OS}"
 # Privilege escalation, decided once.
 if [[ "$VPS_SSH_USER" == "root" ]]; then
   SUDO=""
-elif remote_out 'sudo -n true 2>/dev/null && echo wtp-sudo-ok' | grep -q 'wtp-sudo-ok'; then
+elif contains "$(remote_out 'sudo -n true 2>/dev/null && echo wtp-sudo-ok' || true)" 'wtp-sudo-ok'; then
   SUDO="sudo -n"
 else
   die "The '${VPS_SSH_USER}' account cannot become root without a prompt.
@@ -552,7 +553,7 @@ else
   heading "1/5  Preparing the server — skipped"
 
   if [[ "$WHMCS_ARCHIVE" != "skip" ]] \
-     && ! remote_out "test -f '${WHMCS_WEBROOT}/init.php' && echo present" | grep -q present; then
+     && ! contains "$(remote_out "test -f '${WHMCS_WEBROOT}/init.php' && echo present" || true)" present; then
     info "The web root is empty — putting the WHMCS files in place."
 
     EXTRACT_ANSWERS="$(mktemp)"
@@ -758,7 +759,7 @@ SELFTEST_OUTPUT="$(remote "${SUDO} -u '${WEB_USER}' env WTP_ENV_FILE='${WTP_ENV_
 echo "$SELFTEST_OUTPUT" | sed 's/^/  /'
 
 SELFTEST_OK=0
-echo "$SELFTEST_OUTPUT" | grep -q "All checks passed" && SELFTEST_OK=1
+contains "$SELFTEST_OUTPUT" "All checks passed" && SELFTEST_OK=1
 
 if [[ "$SELFTEST_OK" == "1" ]]; then
   success "The provisioner reports itself healthy."

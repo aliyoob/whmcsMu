@@ -55,7 +55,36 @@ for script in $LOCAL_SCRIPTS; do
     fi
 done
 
-# --- 3. the prompt helpers, exercised for real ------------------------------
+# --- 3. pipefail + grep -q --------------------------------------------------
+#
+# `cmd | grep -q PATTERN` reports failure whenever the writer is still
+# producing output when grep exits at the first match: SIGPIPE, then pipefail
+# turns a *successful* match into rc=141. It works on short output and fails
+# on long output, so it survives testing and breaks in production.
+
+ALL_SCRIPTS="$LOCAL_SCRIPTS infrastructure/lib/remote-provision.sh
+infrastructure/lib/install-whmcs.sh infrastructure/lib/extract-whmcs.sh"
+
+for script in $ALL_SCRIPTS; do
+    [ -f "$script" ] || continue
+    hits=$(grep -nE '\|[[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "$script" | grep -vE '^[0-9]+:[[:space:]]*#')
+    if [ -z "$hits" ]; then
+        report "ok  " "no pipefail/grep -q trap: $script"
+    else
+        report "FAIL" "unsafe '| grep -q' in $script (use contains()):"
+        printf '%s\n' "$hits" | sed 's/^/         /'
+        failures=$((failures + 1))
+    fi
+done
+
+# And prove the trap is real, so nobody "simplifies" contains() away.
+if /bin/bash -c 'set -euo pipefail; seq 1 200000 | grep -q "^1$"' 2>/dev/null; then
+    report "ok  " "this shell does not exhibit the SIGPIPE trap"
+else
+    report "ok  " "SIGPIPE trap reproduced — contains() is load-bearing"
+fi
+
+# --- 4. the prompt helpers, exercised for real ------------------------------
 #
 # Parsing is not enough: ${var,,} is a *runtime* failure.
 
@@ -92,6 +121,11 @@ expect "ask_secret() reads a value" "$ANSWER" "secret"
 
 expect "is_hostname accepts a real host" "$(is_hostname billing.example.com && echo y || echo n)" "y"
 expect "is_hostname rejects a phrase"    "$(is_hostname 'not a host' && echo y || echo n)"        "n"
+contains "hay needle stack" "needle" && c1=y || c1=n
+expect "contains() finds a substring" "$c1" "y"
+contains "hay stack" "needle" && c2=y || c2=n
+expect "contains() rejects a miss"    "$c2" "n"
+
 expect "random_token length"             "$(random_token 24 | tr -d '\n' | wc -c | tr -d ' ')"    "24"
 
 echo

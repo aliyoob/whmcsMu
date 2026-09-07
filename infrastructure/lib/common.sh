@@ -88,6 +88,20 @@ ask_yes_no() {
   fi
 }
 
+# Substring test that does not involve a pipe.
+#
+# `some_command | grep -q PATTERN` is unsafe under `set -o pipefail`: grep
+# exits at the first match, the writer gets SIGPIPE (exit 141), and pipefail
+# reports the whole pipeline as failed — even though the match *succeeded*.
+# It works for short output and fails for long output, which makes it a
+# genuinely nasty bug to find.
+contains() {
+  case "$1" in
+    *"$2"*) return 0 ;;
+    *)      return 1 ;;
+  esac
+}
+
 # Lowercase a string.
 #
 # Not "${var,,}": macOS still ships bash 3.2 as /bin/bash, where that is a
