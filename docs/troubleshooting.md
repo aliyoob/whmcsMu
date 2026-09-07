@@ -31,6 +31,47 @@ without it the worker cannot find the master key and exits.
 
 ---
 
+## Server preparation stops at "Adding the PHP repository"
+
+```
+▸ Installing packages
+  Adding the PHP repository
+Connection to 203.0.113.10 closed.
+✗ Server preparation failed.
+```
+
+The server could not reach the external PHP repository — Ondřej Surý's PPA on
+Ubuntu (`launchpad.net`), or `packages.sury.org` on Debian. Common on networks
+that filter or proxy outbound traffic.
+
+Check from the server:
+
+```bash
+curl -I https://launchpad.net
+curl -I https://ppa.launchpadcontent.net
+apt-cache policy php8.3-fpm php8.2-fpm php8.1-fpm
+```
+
+**The fix is usually to stop needing the repository at all.** Each
+distribution ships a PHP that WHMCS supports:
+
+| Distribution | Ships | Needs a repository for |
+|---|---|---|
+| Ubuntu 24.04 | PHP 8.3 | 8.1, 8.2 |
+| Ubuntu 22.04 | PHP 8.1 | 8.2, 8.3 |
+| Debian 12 | PHP 8.2 | 8.1, 8.3 |
+
+WHMCS 8.13 supports all three versions, so choosing the one your distribution
+already has is a supported choice and removes the dependency. The script now
+suggests that version by default.
+
+Current versions also handle this themselves: if the repository cannot be
+added, the real error is printed and the installation continues with whichever
+supported PHP the system provides, rather than dying silently. Older copies
+swallowed the error — `git pull` and re-run.
+
+---
+
 ## Server preparation stops with "Connection to … closed"
 
 Typically right after a line reading `Scanning processes...`:

@@ -269,11 +269,32 @@ ask WHMCS_ADMIN_EMAIL "Your email (for TLS certificates and alerts)"
 [[ "$WHMCS_ADMIN_EMAIL" == *@*.* ]] || die "'${WHMCS_ADMIN_EMAIL}' does not look like an email address."
 
 ask WHMCS_WEBROOT "Where to install WHMCS" "/var/www/whmcs"
-ask WHMCS_PHP     "PHP version (8.1, 8.2 or 8.3)" "8.2"
+
+# Suggest the version this distribution ships. Anything else needs an external
+# repository (Ondřej Surý's PPA, packages.sury.org), which is one more network
+# dependency and the thing most likely to fail on a restricted network.
+case "$REMOTE_OS" in
+  *"24.04"*)              PHP_SUGGESTED="8.3" ;;
+  *"22.04"*)              PHP_SUGGESTED="8.1" ;;
+  *"Debian"*" 12"*)       PHP_SUGGESTED="8.2" ;;
+  *)                      PHP_SUGGESTED="8.2" ;;
+esac
+
+echo
+echo "  WHMCS 8.13 supports PHP 8.1, 8.2 and 8.3."
+echo "  ${REMOTE_OS} ships ${PHP_SUGGESTED}, so that needs no extra repository."
+echo
+ask WHMCS_PHP "PHP version" "$PHP_SUGGESTED"
 case "$WHMCS_PHP" in
   8.1|8.2|8.3) : ;;
   *) die "WHMCS 8.13 supports 8.1, 8.2 and 8.3 only." ;;
 esac
+
+if [ "$WHMCS_PHP" != "$PHP_SUGGESTED" ]; then
+  warn "PHP ${WHMCS_PHP} is not what ${REMOTE_OS} ships, so an external"
+  warn "repository is needed. If the server cannot reach it, the setup falls"
+  warn "back to ${PHP_SUGGESTED} rather than failing."
+fi
 
 ask WHMCS_DB_NAME "Database name" "whmcs"
 ask WHMCS_DB_USER "Database username" "whmcs"

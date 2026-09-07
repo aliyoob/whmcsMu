@@ -106,17 +106,76 @@ if [[ "$FAMILY" == "debian" ]]; then
     ca-certificates curl wget gnupg lsb-release apt-transport-https \
     software-properties-common unzip tar cron rsync >/dev/null
 
-  # Ondřej Surý's PPA is how you get a specific PHP version on Debian/Ubuntu.
-  if ! apt-cache policy "php${PHP}-fpm" 2>/dev/null | grep -q Candidate:\ [0-9]; then
+  php_available() {
+    apt-cache policy "php$1-fpm" 2>/dev/null | grep -q 'Candidate: [0-9]'
+  }
+
+  # A specific PHP version usually means an external repository — Ondřej Surý's
+  # PPA on Ubuntu, packages.sury.org on Debian. That is a network dependency
+  # some servers cannot reach, so it is only used when the distribution does
+  # not already provide a version WHMCS supports.
+  if ! php_available "$PHP"; then
+    note "PHP ${PHP} is not in this system's own repositories"
+
+    NATIVE=""
+    for candidate in 8.3 8.2 8.1; do
+      if php_available "$candidate"; then
+        NATIVE="$candidate"
+        break
+      fi
+    done
+    [ -n "$NATIVE" ] && note "This system provides PHP ${NATIVE} directly"
+
     note "Adding the PHP repository"
+    REPO_LOG="$(mktemp)"
+    REPO_OK=0
+
     if [[ "$OS_ID" == "ubuntu" ]]; then
-      LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1
+      LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php > "$REPO_LOG" 2>&1 && REPO_OK=1
     else
-      curl -fsSL https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg
-      echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" \
-        > /etc/apt/sources.list.d/sury-php.list
+      if curl -fsSL --max-time 60 https://packages.sury.org/php/apt.gpg \
+           -o /usr/share/keyrings/sury-php.gpg 2> "$REPO_LOG"; then
+        echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" \
+          > /etc/apt/sources.list.d/sury-php.list
+        REPO_OK=1
+      fi
     fi
-    apt-get update -qq
+
+    if [ "$REPO_OK" = "1" ]; then
+      apt-get update -qq || REPO_OK=0
+    fi
+
+    if [ "$REPO_OK" = "1" ] && php_available "$PHP"; then
+      note "Repository added; PHP ${PHP} is now available"
+    else
+      # Never swallow this. A silent failure here used to end the whole
+      # installation with no explanation at all.
+      warn "Could not get PHP ${PHP} from an external repository."
+      if [ -s "$REPO_LOG" ]; then
+        warn "The repository tool said:"
+        tail -15 "$REPO_LOG" | sed 's/^/      /' >&2
+      fi
+
+      if [ -n "$NATIVE" ]; then
+        warn "Continuing with PHP ${NATIVE}, which this system already provides."
+        warn "WHMCS 8.13 supports 8.1, 8.2 and 8.3, so that is a supported choice."
+        PHP="$NATIVE"
+      else
+        rm -f "$REPO_LOG"
+        fail "No PHP version WHMCS supports (8.1, 8.2 or 8.3) is available.
+
+  This server could not reach the external PHP repository, and its own
+  repositories offer nothing WHMCS supports. Usual causes:
+    · no outbound HTTPS to launchpad.net or packages.sury.org
+    · a proxy or firewall intercepting package downloads
+    · a distribution release too old for any supported PHP
+
+  Check from the server with:
+    curl -I https://launchpad.net
+    apt-cache policy php8.3-fpm php8.2-fpm php8.1-fpm"
+      fi
+    fi
+    rm -f "$REPO_LOG"
   fi
 
   PACKAGES=(nginx mariadb-server)
