@@ -407,6 +407,23 @@ fi
 if [[ -n "${WHMCS_ARCHIVE_FILE:-}" && -f "$WHMCS_ARCHIVE_FILE" ]]; then
   if [[ -f "${WHMCS_WEBROOT}/init.php" ]]; then
     warn "WHMCS is already installed here; leaving the existing files alone"
+  elif [[ -n "$(ls -A "$WHMCS_WEBROOT" 2>/dev/null)" && "${WHMCS_RESET_WEBROOT:-n}" == "y" ]]; then
+    BACKUP_WEBROOT="/var/backups/whmcs-webroot-$(date -u +%Y%m%dT%H%M%SZ)"
+    note "Moving the existing web root aside to ${BACKUP_WEBROOT}"
+    mv "$WHMCS_WEBROOT" "$BACKUP_WEBROOT"
+    mkdir -p "$WHMCS_WEBROOT"
+    note "Extracting WHMCS"
+    TMP_EXTRACT="$(mktemp -d)"
+    unzip -q "$WHMCS_ARCHIVE_FILE" -d "$TMP_EXTRACT"
+    SOURCE="$TMP_EXTRACT"
+    [[ -d "${TMP_EXTRACT}/whmcs" ]] && SOURCE="${TMP_EXTRACT}/whmcs"
+    cp -a "${SOURCE}/." "$WHMCS_WEBROOT/"
+    rm -rf "$TMP_EXTRACT"
+    [[ -f "${WHMCS_WEBROOT}/configuration.php" && ! -s "${WHMCS_WEBROOT}/configuration.php" ]] \
+      && rm -f "${WHMCS_WEBROOT}/configuration.php"
+    [[ -f "${WHMCS_WEBROOT}/configuration.php.new" && ! -f "${WHMCS_WEBROOT}/configuration.php" ]] && \
+      mv "${WHMCS_WEBROOT}/configuration.php.new" "${WHMCS_WEBROOT}/configuration.php"
+    note "WHMCS extracted"
   else
     note "Extracting WHMCS"
     TMP_EXTRACT="$(mktemp -d)"

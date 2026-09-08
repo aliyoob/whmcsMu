@@ -30,6 +30,26 @@ if [[ -f "${WEBROOT}/init.php" ]]; then
   exit 0
 fi
 
+# A web root with files but no init.php is a broken or partial installation.
+# Extracting on top would interleave two copies, which is worse than either.
+if [[ -n "$(ls -A "$WEBROOT" 2>/dev/null)" ]]; then
+  if [[ "${WHMCS_RESET_WEBROOT:-n}" == "y" ]]; then
+    BACKUP="/var/backups/whmcs-webroot-$(date -u +%Y%m%dT%H%M%SZ)"
+    note "Moving the existing web root aside to ${BACKUP}"
+    mkdir -p "$(dirname "$BACKUP")"
+    mv "$WEBROOT" "$BACKUP"
+    mkdir -p "$WEBROOT"
+  else
+    fail "${WEBROOT} already contains files but no init.php.
+
+  That is an incomplete or foreign WHMCS. Extracting on top of it would leave
+  the two copies interleaved, which is worse than either on its own.
+
+  Re-run the deployment with --reset-whmcs to move the existing files to
+  /var/backups/ first, or clear ${WEBROOT} yourself."
+  fi
+fi
+
 if [[ -n "${WHMCS_ARCHIVE_URL:-}" ]]; then
   note "Downloading WHMCS…"
   curl -fsSL "$WHMCS_ARCHIVE_URL" -o /tmp/whmcs.zip || fail "Could not download the archive."
@@ -56,6 +76,14 @@ cp -a "${SOURCE}/." "$WEBROOT/"
 rm -rf "$TMP"
 
 # WHMCS ships this with a .new suffix for exactly this step.
+# A zero-byte configuration.php is worse than none: WHMCS fatals in dbconnect
+# instead of redirecting to its installer, and the rename below would skip it
+# because the file technically exists.
+if [[ -f "${WEBROOT}/configuration.php" && ! -s "${WEBROOT}/configuration.php" ]]; then
+  rm -f "${WEBROOT}/configuration.php"
+  note "Removed an empty configuration.php"
+fi
+
 if [[ -f "${WEBROOT}/configuration.php.new" && ! -f "${WEBROOT}/configuration.php" ]]; then
   mv "${WEBROOT}/configuration.php.new" "${WEBROOT}/configuration.php"
 fi

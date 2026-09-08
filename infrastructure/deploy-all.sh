@@ -22,6 +22,8 @@
 #      --skip-deploy     prepare the server only
 #      --skip-tests      do not run the test suite before deploying
 #      --skip-whmcs      do not run the WHMCS installer, even with a licence key
+#      --reset-whmcs     move an existing web root to /var/backups/ and start
+#                        clean — use when replacing a broken or foreign copy
 #      --dry-run         show what would happen, change nothing
 #
 #  Safe to re-run. Everything it replaces on the server is backed up to
@@ -41,6 +43,7 @@ SKIP_SERVER=0
 SKIP_DEPLOY=0
 SKIP_TESTS=0
 SKIP_WHMCS_INSTALL=0
+WHMCS_RESET_WEBROOT="${WHMCS_RESET_WEBROOT:-n}"
 DRY_RUN=0
 CONFIG_FILE=""
 
@@ -53,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --skip-deploy) SKIP_DEPLOY=1; shift ;;
     --skip-tests)  SKIP_TESTS=1; shift ;;
     --skip-whmcs)  SKIP_WHMCS_INSTALL=1; shift ;;
+    --reset-whmcs) WHMCS_RESET_WEBROOT=y; shift ;;
     --dry-run)     DRY_RUN=1; shift ;;
     --help|-h)     awk 'NR>1 && /^#/ { sub(/^#[ ]?/, ""); print; next } NR>1 { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)             die "Unknown option: $1 (try --help)" ;;
@@ -457,7 +461,8 @@ cat <<PLAN
   Database       ${WHMCS_DB_NAME} / ${WHMCS_DB_USER}
   TLS            ${TLS_LABEL}
   Firewall       $([[ "$WHMCS_CONFIGURE_FIREWALL" == "y" ]] && echo "22, 80, 443" || echo "left alone")
-  WHMCS archive  ${ARCHIVE_LABEL}
+  WHMCS archive  ${ARCHIVE_LABEL}$([[ "$WHMCS_RESET_WEBROOT" == "y" ]] \
+                    && printf '\n  Web root       EXISTING FILES MOVED to /var/backups/ first' || true)
   Installation   $([[ "$WHMCS_AUTO_INSTALL" == "y" ]] \
                     && echo "automatic (licence supplied), admin user '${WHMCS_ADMIN_USER}'" \
                     || echo "manual — finish it in a browser")
@@ -518,6 +523,7 @@ WHMCS_ISSUE_TLS='${WHMCS_ISSUE_TLS}'
 WHMCS_CONFIGURE_FIREWALL='${WHMCS_CONFIGURE_FIREWALL}'
 WTP_STORAGE_PATH='${WTP_STORAGE_PATH}'
 WTP_ENV_PATH='${WTP_ENV_PATH}'
+WHMCS_RESET_WEBROOT='${WHMCS_RESET_WEBROOT}'
 ANSWERS
 
   push "$ANSWERS_TMP" "${REMOTE_WORKDIR}/answers.env"
@@ -558,7 +564,8 @@ else
 
     EXTRACT_ANSWERS="$(mktemp)"
     chmod 600 "$EXTRACT_ANSWERS"
-    printf "WHMCS_WEBROOT='%s'\n" "$WHMCS_WEBROOT" > "$EXTRACT_ANSWERS"
+    printf "WHMCS_WEBROOT='%s'\nWHMCS_RESET_WEBROOT='%s'\n" \
+      "$WHMCS_WEBROOT" "$WHMCS_RESET_WEBROOT" > "$EXTRACT_ANSWERS"
 
     if [[ "$WHMCS_ARCHIVE" == http* ]]; then
       printf "WHMCS_ARCHIVE_URL='%s'\n" "$WHMCS_ARCHIVE" >> "$EXTRACT_ANSWERS"

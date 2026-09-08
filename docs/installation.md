@@ -78,6 +78,17 @@ ssh you@server 'sudo chmod 0400 /var/www/whmcs/configuration.php'
 and rename `/var/www/whmcs/admin` to something unguessable, setting
 `$customadminpath` in `configuration.php` to match.
 
+**Replacing an existing installation?** A web root that has files but no
+`init.php` is a broken or foreign copy. Extracting on top of it would leave two
+copies interleaved, so the deployment refuses and tells you to use:
+
+```bash
+./infrastructure/deploy-all.sh --skip-server --reset-whmcs
+```
+
+That moves the existing web root to `/var/backups/whmcs-webroot-<timestamp>/`
+and extracts your archive into a clean directory. Nothing is deleted.
+
 **No archive or licence yet?** Answer `skip` at the archive prompt. The server
 is still prepared completely — only WHMCS itself is left out. Come back with:
 
