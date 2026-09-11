@@ -73,9 +73,20 @@ WHMCS itself is installed through its own documented non-interactive installer
 Without a licence key the script stops at the web installer and prints what you
 need for it.
 
-`deploy-all.sh` is the one-command path. `setup-whmcs.sh` (server only) and
-`deploy.sh` (module only) are the same work split in two, for when you want
-one without the other.
+**Already running WHMCS?** Use the other entry point — it adds the module to a
+live installation without touching WHMCS itself:
+
+```bash
+./infrastructure/install-module.sh
+./infrastructure/install-module.sh --check   # diagnose, change nothing
+```
+
+| Script | Use it when |
+|---|---|
+| `deploy-all.sh` | Bare server. Builds everything, WHMCS included. |
+| `install-module.sh` | WHMCS is already installed and working. |
+| `setup-whmcs.sh` | You want the server prepared and nothing else. |
+| `deploy.sh` | Updating a module that is already installed. |
 
 Then add a theme and a demo (see [theme-demo.md](docs/theme-demo.md)), point a
 hosting product at the `wpthemehost` module, and enable selection for it under

@@ -132,6 +132,35 @@ Anything else is covered in [troubleshooting.md](troubleshooting.md).
 
 ## Path B — an existing WHMCS installation
 
+The quickest route is the dedicated installer:
+
+```bash
+./infrastructure/install-module.sh
+```
+
+It asks for the server and signs in, then does the rest itself: finds WHMCS,
+reads its database settings out of `configuration.php`, creates the package
+storage and the encryption key, registers `WTP_ENV_FILE` with php-fpm, deploys
+the module, adds the `/provisioning/v1` route to the vhost that serves WHMCS,
+installs the worker cron, creates this module's tables and runs the self-test.
+
+It never edits a WHMCS core file, and the only database objects it creates are
+this module's own `mod_wtp_*` tables. Everything it changes is backed up to
+`/var/backups/wtp-module-<timestamp>/` first, and it is safe to run repeatedly.
+
+```bash
+./infrastructure/install-module.sh --check          # diagnose only
+./infrastructure/install-module.sh --webroot /home/billing/public_html
+```
+
+Three things remain, all inside WHMCS: activating the addon, adding a cPanel
+server, and adding a theme and demo. They are covered at the end of Path A.
+
+### Doing it by hand
+
+If you would rather not run a script against a live billing system, the same
+work, step by step:
+
 ### 1. Build
 
 ```bash

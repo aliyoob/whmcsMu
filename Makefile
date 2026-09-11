@@ -41,6 +41,10 @@ clean: ## Remove build output
 deploy: ## Full deployment to a server (asks for the password)
 	@./infrastructure/deploy-all.sh
 
+.PHONY: install-module
+install-module: ## Install the module into a server that already runs WHMCS
+	@./infrastructure/install-module.sh
+
 .PHONY: keygen
 keygen: ## Print a new master key
 	@$(PHP) bin/wtp-keygen.php
