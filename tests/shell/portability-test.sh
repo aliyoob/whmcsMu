@@ -16,6 +16,7 @@ LOCAL_SCRIPTS="
 infrastructure/setup-whmcs.sh
 infrastructure/deploy.sh
 infrastructure/deploy-all.sh
+infrastructure/install-module.sh
 infrastructure/lib/common.sh
 infrastructure/lib/ssh-auth.sh
 "
@@ -63,7 +64,8 @@ done
 # on long output, so it survives testing and breaks in production.
 
 ALL_SCRIPTS="$LOCAL_SCRIPTS infrastructure/lib/remote-provision.sh
-infrastructure/lib/install-whmcs.sh infrastructure/lib/extract-whmcs.sh"
+infrastructure/lib/install-whmcs.sh infrastructure/lib/extract-whmcs.sh
+infrastructure/lib/install-module-remote.sh"
 
 for script in $ALL_SCRIPTS; do
     [ -f "$script" ] || continue

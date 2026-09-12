@@ -19,6 +19,20 @@ final class Config
     public const ENV_PATH_CONSTANT = 'WTP_ENV_FILE';
     public const DEFAULT_ENV_PATH = '/etc/whmcs-wtp/wtp.env';
 
+    /**
+     * A file the installer may drop in the module root holding nothing but the
+     * absolute path of the environment file:
+     *
+     *     <?php return '/home/billing/.whmcs-wtp/wtp.env';
+     *
+     * It exists for stacks where we cannot set an environment variable for the
+     * web process without editing generated configuration that the panel will
+     * later overwrite — cPanel being the reason it was written. It carries a
+     * path, never a secret, and the .php extension means a direct HTTP request
+     * for it executes and prints nothing.
+     */
+    public const ENV_POINTER_FILE = 'env-path.php';
+
     /** @var array<string,string> */
     private $env = [];
     /** @var array<string,string> */
@@ -160,7 +174,25 @@ final class Config
         if ($fromEnv !== false && $fromEnv !== '') {
             return $fromEnv;
         }
+
+        $pointer = self::envPointerPath();
+        if (is_file($pointer) && is_readable($pointer)) {
+            /** @psalm-suppress UnresolvableInclude */
+            $value = @include $pointer;
+            // Absolute paths only: a relative one would resolve against
+            // whatever directory the caller happened to be in.
+            if (is_string($value) && isset($value[0]) && $value[0] === '/') {
+                return $value;
+            }
+        }
+
         return self::DEFAULT_ENV_PATH;
+    }
+
+    /** Absolute path of the pointer file described on ENV_POINTER_FILE. */
+    public static function envPointerPath(): string
+    {
+        return dirname(__DIR__, 2) . '/' . self::ENV_POINTER_FILE;
     }
 
     /**

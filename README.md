@@ -84,7 +84,7 @@ live installation without touching WHMCS itself:
 | Script | Use it when |
 |---|---|
 | `deploy-all.sh` | Bare server. Builds everything, WHMCS included. |
-| `install-module.sh` | WHMCS is already installed and working. |
+| `install-module.sh` | WHMCS is already installed and working, on a plain server or inside a cPanel account. |
 | `setup-whmcs.sh` | You want the server prepared and nothing else. |
 | `deploy.sh` | Updating a module that is already installed. |
 

@@ -37,3 +37,6 @@ wordpress/mu-plugins/whmcs-theme-provisioner/shared/autoload.php
 
 # Credentials written by deploy-all.sh
 infrastructure/credentials-*.txt
+
+# Written by install-module.sh on the server; holds a path, never a secret.
+whmcs/modules/addons/wpthemeprovisioner/env-path.php

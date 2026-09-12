@@ -144,11 +144,22 @@ heading "WHMCS"
 
 # Find it before asking, so the question has a sensible default.
 if [[ -z "${WHMCS_WEBROOT:-}" ]]; then
+  # On cPanel the document roots are declared, so ask the panel rather than
+  # guessing: subdomain and addon-domain roots are nowhere near the usual list.
   DETECTED="$(remote_value '
+    for ud in /var/cpanel/userdata/*/*; do
+      [ -f "$ud" ] || continue
+      case "$ud" in *.cache|*.json|*_SSL|*/main|*/nginx*) continue ;; esac
+      dr=$(sed -n "s/^documentroot: *//p" "$ud")
+      [ -n "$dr" ] || continue
+      for c in "$dr" "$dr/whmcs" "$dr/billing"; do
+        if [ -f "$c/init.php" ] && [ -d "$c/modules" ]; then echo "$c"; exit 0; fi
+      done
+    done
     for c in /var/www/whmcs /var/www/html/whmcs /var/www/html \
              /home/*/public_html/whmcs /home/*/public_html \
              /usr/share/nginx/html/whmcs /srv/www/whmcs; do
-      if [ -f "$c/init.php" ] && [ -d "$c/modules" ]; then echo "$c"; break; fi
+      if [ -f "$c/init.php" ] && [ -d "$c/modules" ]; then echo "$c"; exit 0; fi
     done' || true)"
 
   if [[ -n "$DETECTED" ]]; then
@@ -175,9 +186,37 @@ case "$WTP_API_BASE_URL" in
   *)         die "The URL must start with http:// or https://" ;;
 esac
 
+# Is this a cPanel account? It changes where our files can live, so it has to
+# be known before the paths are offered — otherwise the plan we print is a lie
+# and the remote script quietly overrides it.
+IS_CPANEL=0
+CPANEL_HOME=""
+if contains "$(remote_out 'test -x /usr/local/cpanel/cpanel && echo wtp-cpanel' || true)" 'wtp-cpanel'; then
+  IS_CPANEL=1
+  CPANEL_USER="$(remote_value "stat -c '%U' '${WHMCS_WEBROOT}/init.php' 2>/dev/null" || true)"
+  if [[ -n "$CPANEL_USER" ]]; then
+    CPANEL_HOME="$(remote_value "awk -F: -v u='${CPANEL_USER}' '\$1 == u { h = \$6 } END { print h }' /etc/passwd" || true)"
+  fi
+  if [[ -n "$CPANEL_HOME" ]]; then
+    success "cPanel — WHMCS belongs to ${CPANEL_USER} (${CPANEL_HOME})"
+    info "Storage and the encryption key go inside the account's home directory,"
+    info "because CageFS and open_basedir can hide everything outside it."
+  else
+    warn "cPanel is installed but the owning account could not be identified."
+    IS_CPANEL=0
+  fi
+fi
+
 heading "Paths"
-ask WTP_STORAGE_PATH "Where to keep theme and demo packages" "/var/lib/whmcs-wtp/packages"
-ask WTP_ENV_PATH     "Where to keep the encryption key"      "/etc/whmcs-wtp/wtp.env"
+if [[ "$IS_CPANEL" == "1" ]]; then
+  DEFAULT_STORAGE="${CPANEL_HOME}/.whmcs-wtp/packages"
+  DEFAULT_ENV="${CPANEL_HOME}/.whmcs-wtp/wtp.env"
+else
+  DEFAULT_STORAGE="/var/lib/whmcs-wtp/packages"
+  DEFAULT_ENV="/etc/whmcs-wtp/wtp.env"
+fi
+ask WTP_STORAGE_PATH "Where to keep theme and demo packages" "$DEFAULT_STORAGE"
+ask WTP_ENV_PATH     "Where to keep the encryption key"      "$DEFAULT_ENV"
 
 # ---------------------------------------------------------------------------
 
@@ -186,6 +225,7 @@ cat <<PLAN
   Server         ${TARGET}:${VPS_SSH_PORT}
                  ${REMOTE_OS:-unknown}
   WHMCS          ${WHMCS_WEBROOT}
+  Panel          $([[ "$IS_CPANEL" == "1" ]] && echo "cPanel — account ${CPANEL_USER}" || echo "none detected")
   URL            ${WTP_API_BASE_URL}
   Storage        ${WTP_STORAGE_PATH}
   Encryption key ${WTP_ENV_PATH}
@@ -265,6 +305,9 @@ set -e
 
 ADMIN_PATH="$(sed -n 's/^WTP_ADMIN_PATH=//p' "$REMOTE_OUTPUT" | tr -d '\r' | tail -1)"
 WEB_USER="$(sed -n 's/^WTP_WEB_USER=//p' "$REMOTE_OUTPUT" | tr -d '\r' | tail -1)"
+# The server has the last word on these: it may have relocated them.
+ENV_PATH_USED="$(sed -n 's/^WTP_ENV_PATH_USED=//p' "$REMOTE_OUTPUT" | tr -d '\r' | tail -1)"
+[[ -n "$ENV_PATH_USED" ]] && WTP_ENV_PATH="$ENV_PATH_USED"
 SELFTEST_PASSED=0
 contains "$(cat "$REMOTE_OUTPUT")" "All checks passed" && SELFTEST_PASSED=1
 rm -f "$REMOTE_OUTPUT"
@@ -307,6 +350,13 @@ The module is on the server. Three steps left, all inside WHMCS.
 
      Make the token in WHM → Development → Manage API Tokens, with
      create-acct, suspend-acct, passwd, list-accts and cPanel API access.
+$(if [[ "$IS_CPANEL" == "1" ]]; then cat <<'CPNOTE'
+
+     This server runs cPanel itself. It can host the customers too, but WHMCS
+     and the sites it provisions then share one machine — think about whether
+     that is what you want before pointing it at itself.
+CPNOTE
+fi)
 
      Then press Test Connection. It checks WHM *and* this module, and says
      plainly which part is wrong.

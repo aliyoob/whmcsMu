@@ -140,9 +140,9 @@ The quickest route is the dedicated installer:
 
 It asks for the server and signs in, then does the rest itself: finds WHMCS,
 reads its database settings out of `configuration.php`, creates the package
-storage and the encryption key, registers `WTP_ENV_FILE` with php-fpm, deploys
-the module, adds the `/provisioning/v1` route to the vhost that serves WHMCS,
-installs the worker cron, creates this module's tables and runs the self-test.
+storage and the encryption key, tells PHP where to find that key, deploys the
+module, makes sure `/provisioning/v1` is routed, installs the worker cron,
+creates this module's tables and runs the self-test.
 
 It never edits a WHMCS core file, and the only database objects it creates are
 this module's own `mod_wtp_*` tables. Everything it changes is backed up to
@@ -155,6 +155,49 @@ this module's own `mod_wtp_*` tables. Everything it changes is backed up to
 
 Three things remain, all inside WHMCS: activating the addon, adding a cPanel
 server, and adding a theme and demo. They are covered at the end of Path A.
+
+### When WHMCS itself runs on cPanel
+
+The installer detects this and changes four things, because a cPanel account is
+not a plain server:
+
+| | Plain server | cPanel account |
+|---|---|---|
+| Encryption key | `/etc/whmcs-wtp/wtp.env` | `<home>/.whmcs-wtp/wtp.env` |
+| Package storage | `/var/lib/whmcs-wtp/packages` | `<home>/.whmcs-wtp/packages` |
+| How PHP finds the key | `env[WTP_ENV_FILE]` in the php-fpm pool | `env-path.php` in the module directory |
+| Worker cron | `/etc/cron.d/whmcs-wtp` | the account's own crontab |
+| `/provisioning/v1` | added to the nginx vhost | the shipped `.htaccess` |
+
+The reasons, in the same order:
+
+- **Paths move into the home directory** because CloudLinux's CageFS, and plain
+  `open_basedir`, hide everything outside it from the account's PHP. A key the
+  web process cannot read is a key that does not exist. The cost is that both
+  now count against the account's disk quota — and, usefully, both are included
+  in its cPanel backups.
+- **`env-path.php`** is a file in the module directory containing the absolute
+  path of the environment file and nothing else. cPanel *generates* its php-fpm
+  pool files, so a line we appended would be discarded the next time the panel
+  rebuilt them — leaving an installation that worked on the day and broke weeks
+  later for no visible reason. The pointer file survives rebuilds, needs no
+  service restart, holds no secret, and the `.php` extension means a direct HTTP
+  request for it executes and prints nothing.
+- **The account's crontab** is what cPanel manages, shows, backs up and
+  restores. An `/etc/cron.d` entry would be invisible in the panel.
+- **The vhost is left alone** for the same reason as the pool files. The shipped
+  `provisioning/v1/.htaccess` is the supported way in, and needs `AllowOverride`
+  to be anything but `None` plus `mod_rewrite` built in EasyApache 4.
+
+It also runs the account's *own* PHP — read from the vhost's `phpversion`, so
+`ea-php83` and CloudLinux's `alt-php83` both resolve correctly — rather than
+`/usr/local/bin/php`, which is the system default and regularly a different
+version with different extensions.
+
+Finally it asks the question that actually matters, empirically: it runs PHP
+*as the account* and checks that it can read the key and the storage directory.
+`open_basedir`, CageFS and ordinary permissions all fail in the same way, and
+this catches all three before the first order does.
 
 ### Doing it by hand
 
