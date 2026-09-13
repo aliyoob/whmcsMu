@@ -199,6 +199,31 @@ Finally it asks the question that actually matters, empirically: it runs PHP
 `open_basedir`, CageFS and ordinary permissions all fail in the same way, and
 this catches all three before the first order does.
 
+### When you have a cPanel account and no root
+
+No WHM, no root SSH, nothing outside your own home directory — a WHMCS on
+shared hosting. `install-module.sh` cannot help here: it needs root for
+`/etc/cron.d` and for file ownership. Everything it does, though, has an
+unprivileged equivalent on cPanel, so the module ships its own setup script:
+
+```bash
+php modules/addons/wpthemeprovisioner/bin/setup-cpanel.php --check
+php modules/addons/wpthemeprovisioner/bin/setup-cpanel.php
+```
+
+Run it from **cPanel → Terminal**, or over SSH as the account. It creates the
+storage and the key under `~/.whmcs-wtp/`, writes `env-path.php` so PHP can find
+the key without an environment variable, checks the extensions and the route,
+verifies the key is readable back through the pointer, and prints the cron
+command to paste into **cPanel → Cron Jobs**.
+
+Two things it cannot do, and says so: adding that cron job, and activating the
+addon in the WHMCS admin area.
+
+If your host has disabled Terminal *and* SSH, the same work is possible entirely
+through File Manager — see [quickstart-fa.md](quickstart-fa.md) — but the script
+is worth asking your host to enable shell access for.
+
 ### Doing it by hand
 
 If you would rather not run a script against a live billing system, the same
