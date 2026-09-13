@@ -76,11 +76,67 @@ use Wtp\Addon\Admin\View;
 </fieldset>
 
 <fieldset>
-    <legend>Cron</legend>
-    <p>Add this to the WHMCS server's crontab, running as the web user:</p>
-    <pre>* * * * * /usr/bin/php -q <?= View::e(defined('WTP_ADDON_DIR') ? WTP_ADDON_DIR : '') ?>/cron/worker.php &gt;/dev/null 2&gt;&amp;1</pre>
+    <legend>Setup</legend>
     <p class="muted">
-        Without it, jobs are created but never advance. Verify with
+        Activation created everything below that PHP is able to create. Anything
+        marked missing has to be dealt with by hand before the first order.
+    </p>
+    <table class="wtp">
+        <tbody>
+            <tr>
+                <th>Encryption key</th>
+                <td><code><?= View::e($setup['env_path']) ?></code></td>
+                <td><?= $setup['has_master_key']
+                    ? '<span class="label label-success">present</span>'
+                    : '<span class="label label-danger">missing</span>' ?></td>
+            </tr>
+            <tr>
+                <th>Package storage</th>
+                <td><code><?= View::e($setup['storage_path']) ?></code></td>
+                <td><?= $setup['storage_exists']
+                    ? '<span class="label label-success">present</span>'
+                    : '<span class="label label-danger">missing</span>' ?></td>
+            </tr>
+            <tr>
+                <th>Agent package</th>
+                <td><code><?= View::e($setup['agent_package']) ?></code></td>
+                <td><?= $setup['agent_installed']
+                    ? '<span class="label label-success">installed</span>'
+                    : '<span class="label label-danger">missing</span>' ?></td>
+            </tr>
+<?php if ($setup['pointer_needed']): ?>
+            <tr>
+                <th>Key location file</th>
+                <td><code><?= View::e($setup['pointer_path']) ?></code></td>
+                <td><?= $setup['pointer_exists']
+                    ? '<span class="label label-success">present</span>'
+                    : '<span class="label label-danger">missing</span>' ?></td>
+            </tr>
+<?php endif; ?>
+        </tbody>
+    </table>
+    <p class="muted">
+        Back up the encryption key. Losing it makes every stored credential
+        unreadable, permanently.
+    </p>
+</fieldset>
+
+<fieldset>
+    <legend>Cron</legend>
+<?php if ($setup['cpanel']): ?>
+    <p>In cPanel &rarr; Advanced &rarr; Cron Jobs, add a job running
+       <strong>Once Per Minute</strong> (<code>* * * * *</code>) with this command:</p>
+<?php else: ?>
+    <p>Add this to the WHMCS server's crontab, running as the web user:</p>
+<?php endif; ?>
+    <pre><?php if (!$setup['cpanel']): ?>* * * * * <?php endif; ?><?= View::e($setup['cron_command']) ?></pre>
+    <p class="muted">
+        Use that exact PHP path rather than plain <code>php</code>: the one on
+        <code>PATH</code> is frequently a different version from the one this
+        site runs, with different extensions.
+    </p>
+    <p class="muted">
+        Without the cron entry, jobs are created but never advance. Verify with
         <code>php cron/worker.php --selftest</code>.
     </p>
 </fieldset>

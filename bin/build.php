@@ -122,6 +122,16 @@ $agentSha = hash_file('sha256', $zipPath);
 echo "  agent package: {$added} files, " . human_bytes((int) filesize($zipPath)) . "\n";
 echo "  sha256: {$agentSha}\n";
 
+// A copy travels inside the module, so activating the addon can install it into
+// package storage. Without it, someone with only File Manager has to find the
+// zip and place it by hand — and discovers they did not only when the first
+// order stops halfway. Staged into dist only: it is a build artifact and has no
+// business in the repository.
+$shippedAgent = $whmcsDist . '/modules/addons/wpthemeprovisioner/resources/agent.zip';
+ensure_dir(dirname($shippedAgent));
+copy_file($zipPath, $shippedAgent);
+echo "  agent package -> modules/addons/wpthemeprovisioner/resources/agent.zip\n";
+
 // ---------------------------------------------------------------------------
 // 5. Checksums and deployment notes
 // ---------------------------------------------------------------------------
@@ -149,9 +159,10 @@ echo str_repeat('─', 60) . "\n";
 echo "Done.\n\n";
 echo "Next steps:\n";
 echo "  1. rsync -a --delete dist/whmcs/ user@server:/path/to/whmcs/\n";
-echo "  2. install dist/agent/whmcs-theme-provisioner.zip into package storage as\n";
-echo "     <storage_path>/agent/whmcs-theme-provisioner.zip\n";
-echo "  3. php modules/addons/wpthemeprovisioner/cron/worker.php --selftest\n";
+echo "  2. activate the addon in WHMCS — that creates the tables, the storage,\n";
+echo "     the encryption key, and installs the agent package\n";
+echo "  3. add the worker cron entry shown on the addon's Settings tab\n";
+echo "  4. php modules/addons/wpthemeprovisioner/cron/worker.php --selftest\n";
 
 exit(0);
 

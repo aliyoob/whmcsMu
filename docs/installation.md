@@ -199,6 +199,34 @@ Finally it asks the question that actually matters, empirically: it runs PHP
 `open_basedir`, CageFS and ordinary permissions all fail in the same way, and
 this catches all three before the first order does.
 
+### Installing it the way a plugin installs
+
+WHMCS has no "upload a zip" flow for addon modules the way WordPress does for
+plugins: the files always arrive by FTP or File Manager. But once they are
+there, activation does the rest. `wpthemeprovisioner_activate()` creates the
+package storage, generates the encryption key, writes `env-path.php` so PHP can
+find that key on the next request, and installs the agent package from the copy
+that ships inside the module. Everything is idempotent, and an existing key is
+never regenerated — Activate is a button people click twice, and regenerating
+the key would make every stored credential permanently undecryptable.
+
+So the short version, on any host:
+
+1. Upload `dist/whmcs/` into your WHMCS directory.
+2. **System Settings → Addon Modules → Activate.**
+3. Add the cron entry the **Settings** tab shows you.
+
+Step 3 is the one thing a web request genuinely cannot do for itself, so the
+Settings tab prints the exact command — with the absolute path of the PHP that
+is actually running, because the `php` on `PATH` is regularly a different
+version — and shows whether the key, the storage and the agent package are in
+place.
+
+The scripts below still exist and still do more: they check PHP extensions and
+ionCube, probe the API route from outside, wire up the cron entry themselves,
+and verify that the web user can genuinely read what was created. Prefer them
+when you have shell access.
+
 ### When you have a cPanel account and no root
 
 No WHM, no root SSH, nothing outside your own home directory — a WHMCS on

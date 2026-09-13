@@ -157,6 +157,7 @@ final class AdminController
                     'tables' => $this->installer()->tableStatus(),
                     'migrations' => $this->installer()->appliedMigrations(),
                     'diagnostics' => $this->diagnostics(),
+                    'setup' => $this->setupReport(),
                 ]);
 
             case 'dashboard':
@@ -516,6 +517,25 @@ final class AdminController
     }
 
     /** @return array<int,array{label:string,ok:bool,detail:string}> */
+    /**
+     * What activation was and was not able to set up. Read-only: the Settings
+     * tab reports, it does not quietly create things behind a page load.
+     *
+     * @return array<string,mixed>
+     */
+    private function setupReport(): array
+    {
+        $root = WTP_ADDON_DIR;
+        for ($depth = 0; $depth < 7; $depth++) {
+            $root = dirname($root);
+            if (is_file($root . '/init.php')) {
+                break;
+            }
+        }
+
+        return \Wtp\Addon\Support\SelfSetup::discover(WTP_ADDON_DIR, $root)->report();
+    }
+
     private function diagnostics(): array
     {
         $checks = [];

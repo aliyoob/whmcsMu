@@ -189,6 +189,12 @@ final class Config
         return self::DEFAULT_ENV_PATH;
     }
 
+    /** The environment file path this process would use right now. */
+    public static function currentEnvPath(): string
+    {
+        return self::resolveEnvPath(null);
+    }
+
     /** Absolute path of the pointer file described on ENV_POINTER_FILE. */
     public static function envPointerPath(): string
     {

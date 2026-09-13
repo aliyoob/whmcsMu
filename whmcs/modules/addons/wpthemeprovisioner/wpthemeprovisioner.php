@@ -109,20 +109,71 @@ function wpthemeprovisioner_activate()
         }
         $installer->seedDefaults();
 
-        $notes = [];
-        if (!$container->config()->hasMasterKey()) {
-            $notes[] = 'Set WTP_MASTER_KEY in ' . $container->config()->envPath()
-                . ' before taking orders (see docs/security.md).';
+        // WHMCS gives an addon exactly one hook at install time, so this is
+        // where the rest of the setup has to happen: storage, the encryption
+        // key, the pointer to it, and the agent package. All idempotent — a
+        // second click on Activate must never replace an existing key.
+        $setup = \Wtp\Addon\Support\SelfSetup::discover(WTP_ADDON_DIR, wpthemeprovisioner_whmcs_root());
+        $selfSetup = $setup->run($container->config()->apiBaseUrl(wpthemeprovisioner_system_url()));
+
+        $parts = [count($result['applied']) . ' migration(s) applied.'];
+        foreach ($selfSetup['done'] as $line) {
+            $parts[] = $line . '.';
         }
-        $notes[] = 'Add the worker cron entry — see the Settings tab.';
+        foreach ($selfSetup['notes'] as $line) {
+            $parts[] = $line;
+        }
+
+        if ($selfSetup['errors'] !== []) {
+            // The schema is in place, so this is not a failed activation — but
+            // it will not provision anything until these are dealt with.
+            return [
+                'status' => 'success',
+                'description' => implode(' ', $parts) . ' <strong>Still to do:</strong> '
+                    . implode(' ', $selfSetup['errors'])
+                    . ' Then open the Settings tab.',
+            ];
+        }
+
+        $parts[] = 'One step left: add the worker cron entry shown on the Settings tab.';
 
         return [
             'status' => 'success',
-            'description' => count($result['applied']) . ' migration(s) applied. ' . implode(' ', $notes),
+            'description' => implode(' ', $parts),
         ];
     } catch (\Throwable $e) {
         return ['status' => 'error', 'description' => 'Activation failed: ' . $e->getMessage()];
     }
+}
+
+/**
+ * The WHMCS directory, found by walking up from this module.
+ */
+function wpthemeprovisioner_whmcs_root()
+{
+    $candidate = WTP_ADDON_DIR;
+    for ($depth = 0; $depth < 7; $depth++) {
+        $candidate = dirname($candidate);
+        if (is_file($candidate . '/init.php') && is_dir($candidate . '/modules/addons')) {
+            return $candidate;
+        }
+    }
+    return dirname(WTP_ADDON_DIR, 3);
+}
+
+/**
+ * WHMCS's own System URL, when WHMCS is far enough up to have one.
+ */
+function wpthemeprovisioner_system_url()
+{
+    try {
+        if (class_exists('\WHMCS\Config\Setting')) {
+            return (string) \WHMCS\Config\Setting::getValue('SystemURL');
+        }
+    } catch (\Throwable $e) {
+        // Called during activation, where anything may be half-built.
+    }
+    return '';
 }
 
 /**
